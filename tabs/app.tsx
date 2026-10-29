@@ -962,7 +962,15 @@ export default function App() {
   }, [state, trashableIds, reviewedIds, getKept])
 
   const [reviewBinOpen, setReviewBinOpen] = useState(false)
-  const binSet = useMemo(() => new Set(trashConfirm?.mediaKeysToTrash ?? []), [trashConfirm])
+  // The bin always reflects the current selection, so it can be reviewed before "Move to Trash".
+  const liveBatch = useMemo(
+    () =>
+      state.status === "results"
+        ? buildTrashBatch(state.groups, state.mediaItems, trashableIds, getKept, reviewedIds)
+        : null,
+    [state, trashableIds, getKept, reviewedIds]
+  )
+  const binSet = useMemo(() => new Set(liveBatch?.mediaKeysToTrash ?? []), [liveBatch])
   const binGroups = useMemo(
     () => (state.status === "results" ? state.groups.filter((g) => g.mediaKeys.some((k) => binSet.has(k))) : []),
     [binSet, state]
@@ -985,11 +993,12 @@ export default function App() {
       for (const k of trash) restored.delete(k)
       const next = keepPhotos(keptOverrides, state.groups, restored, getKept)
       setKeptOverrides(next)
-      setTrashConfirm(
-        buildTrashBatch(state.groups, state.mediaItems, trashableIds, (g) => next[g.id] ?? getKept(g), reviewedIds)
-      )
+      if (trashConfirm)
+        setTrashConfirm(
+          buildTrashBatch(state.groups, state.mediaItems, trashableIds, (g) => next[g.id] ?? getKept(g), reviewedIds)
+        )
     },
-    [state, binSet, keptOverrides, getKept, trashableIds, reviewedIds]
+    [state, binSet, keptOverrides, getKept, trashableIds, reviewedIds, trashConfirm]
   )
 
   const [backupProgress, setBackupProgress] = useState<[number, number] | null>(null)
@@ -1341,6 +1350,7 @@ export default function App() {
               onDeselectAll={handleDeselectAll}
               onSelectIdentical={() => setSafeSelectOpen(true)}
               onTrash={handleTrash}
+              onReviewBin={() => setReviewBinOpen(true)}
               onRescan={handleReset}
             />
             <SafeSelectDialog
@@ -1524,7 +1534,7 @@ export default function App() {
 
       {state.status === "results" && (
         <TrashReviewDialog
-          open={reviewBinOpen && !!trashConfirm}
+          open={reviewBinOpen}
           groups={binGroups}
           mediaItems={state.mediaItems}
           keptOf={getKept}

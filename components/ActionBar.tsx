@@ -16,6 +16,7 @@ interface ActionBarProps {
   onDeselectAll: () => void
   onSelectIdentical: () => void
   onTrash: () => void
+  onReviewBin: () => void
   onRescan: () => void
 }
 
@@ -27,6 +28,7 @@ export function ActionBar({
   onDeselectAll,
   onSelectIdentical,
   onTrash,
+  onReviewBin,
   onRescan,
 }: ActionBarProps) {
   return (
@@ -81,6 +83,9 @@ export function ActionBar({
             Select identical…
           </Button>
           <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
+          <Button size="small" disabled={duplicateCount === 0} onClick={onReviewBin}>
+            Review bin
+          </Button>
           <Button
             variant="contained"
             color="error"
