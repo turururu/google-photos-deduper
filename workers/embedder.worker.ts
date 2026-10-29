@@ -8,6 +8,7 @@
 //   { type: "init", data: { wasmLoaderUrl, wasmBinaryUrl, modelBuffer: ArrayBuffer } }
 //   { type: "embed", data: { items: Array<{ localIdx: number, blob: Blob }> } }
 //   { type: "detect", data: { flatEmbeddings: Float32Array, n: number, dim: number, threshold: number } }
+//   { type: "detectBlock", data: { flatEmbeddings, n, dim, threshold, start, end, id } }  (rows [start,end) vs all)
 //   { type: "detectSmart", data: { flatEmbeddings: Float32Array, n: number, dim: number, threshold: number, buckets: number[][] } }
 //
 // Message protocol (worker → main):
@@ -16,10 +17,13 @@
 //   { type: "initError", message: string }
 //   { type: "detectionProgress", current: number, total: number }
 //   { type: "detectionResults", groups: number[][] }
+//   { type: "blockProgress", id, rows } / { type: "blockResults", id, communities: number[][] }
 
 import { ImageEmbedder } from "@mediapipe/tasks-vision";
+import { extractRowCommunities } from "../lib/community";
 
 let embedder: ImageEmbedder | null = null;
+let blockEmbeddings: Float32Array | null = null;
 
 self.addEventListener("message", async (event: MessageEvent) => {
   const { type, data } = event.data;
@@ -113,6 +117,25 @@ self.addEventListener("message", async (event: MessageEvent) => {
       },
     );
     self.postMessage({ type: "detectionResults", groups });
+  }
+
+  if (type === "detectBlock") {
+    const { flatEmbeddings, n, dim, threshold, start, end, id } = data as {
+      flatEmbeddings?: Float32Array;
+      n: number;
+      dim: number;
+      threshold: number;
+      start: number;
+      end: number;
+      id: number;
+    };
+    // The embeddings are sent once (first block); later blocks reuse them.
+    if (flatEmbeddings) blockEmbeddings = flatEmbeddings;
+    if (!blockEmbeddings) return;
+    const communities = extractRowCommunities(blockEmbeddings, n, dim, start, end, threshold, (rows) =>
+      self.postMessage({ type: "blockProgress", id, rows }),
+    );
+    self.postMessage({ type: "blockResults", id, communities });
   }
 
   if (type === "detectSmart") {

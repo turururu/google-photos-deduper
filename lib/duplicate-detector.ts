@@ -6,6 +6,7 @@
 // 2. Compute L2-normalized embeddings via MediaPipe MobileNet V3
 // 3. Group duplicates using fast community detection (cosine similarity)
 
+import { mergeCommunities } from "./community";
 import type { GpdMediaItem, DuplicateGroup } from "./types";
 import { buildThumbUrl } from "./photo-url";
 import { StabilityTracker } from "./scan-log";
@@ -990,17 +991,25 @@ async function computeEmbeddings(
 // Step 3: Community detection — worker wrapper
 // ============================================================
 
+/** Rows per work item; small enough to balance load, large enough to keep messages rare. */
+const BLOCK_ROWS = 512;
+/** Each worker holds its own copy of the embeddings, so cap workers by memory too. */
+const MAX_DETECT_WORKERS = 6;
+const MAX_DETECT_BYTES = 2.5e9;
+
+export function detectWorkerCount(n: number, dim: number, cores = navigator.hardwareConcurrency || 4): number {
+  const byMemory = Math.max(1, Math.floor(MAX_DETECT_BYTES / Math.max(1, n * dim * 4)));
+  return Math.max(1, Math.min(MAX_DETECT_WORKERS, cores - 2, byMemory));
+}
+
 /**
- * Runs communityDetection in a dedicated worker so the main thread stays
- * responsive during the computation.
- *
- * Embeddings are packed into a single transferable Float32Array and sent
- * to the worker. The worker returns number[][] (the group index lists).
+ * Full pairwise detection split across a pool of workers. Rows are handed out in
+ * blocks and results merged in row order, so the outcome equals a single-thread run.
  */
 async function runCommunityDetectionInWorker(
   embeddings: Float32Array[],
   threshold: number,
-  timestamps: number[],
+  _timestamps: number[],
   workerUrl: string,
   onProgress?: ProgressCallback,
   signal?: AbortSignal,
@@ -1008,52 +1017,71 @@ async function runCommunityDetectionInWorker(
   const n = embeddings.length;
   if (n === 0) return [];
   const dim = embeddings[0].length;
-
-  // Pack all embedding rows into one flat buffer for zero-copy transfer
   const flat = new Float32Array(n * dim);
   for (let i = 0; i < n; i++) flat.set(embeddings[i], i * dim);
 
-  const worker = new Worker(workerUrl);
+  const blocks: [number, number][] = [];
+  for (let s = 0; s < n; s += BLOCK_ROWS) blocks.push([s, Math.min(s + BLOCK_ROWS, n)]);
+  const results: number[][][] = new Array(blocks.length);
+  const rowsDone = new Map<number, number>(); // block id -> rows reported so far
+  let finishedRows = 0;
+  let next = 0;
+  let pending = blocks.length;
+  const workers: Worker[] = [];
+
+  const report = () => {
+    let inFlight = 0;
+    for (const v of rowsDone.values()) inFlight += v;
+    onProgress?.({ phase: "detecting_duplicates", current: Math.min(n, finishedRows + inFlight), total: n });
+  };
 
   return new Promise<number[][]>((resolve, reject) => {
-    if (signal?.aborted) {
-      worker.terminate();
-      reject(new DOMException("Aborted", "AbortError"));
-      return;
-    }
-
+    const stop = () => {
+      signal?.removeEventListener("abort", onAbort);
+      for (const w of workers) w.terminate();
+    };
     const onAbort = () => {
-      worker.terminate();
+      stop();
       reject(new DOMException("Aborted", "AbortError"));
     };
+    if (signal?.aborted) return onAbort();
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    worker.onmessage = (e) => {
-      if (e.data.type === "detectionProgress") {
-        onProgress?.({
-          phase: "detecting_duplicates",
-          current: e.data.current,
-          total: e.data.total,
-        });
-      } else if (e.data.type === "detectionResults") {
-        signal?.removeEventListener("abort", onAbort);
-        worker.terminate();
-        resolve(e.data.groups as number[][]);
-      }
-    };
-    worker.onerror = (e) => {
-      signal?.removeEventListener("abort", onAbort);
-      worker.terminate();
-      reject(new Error(e.message ?? "Worker error during community detection"));
+    const count = Math.min(detectWorkerCount(n, dim), blocks.length);
+    const dispatch = (w: Worker, first: boolean) => {
+      if (next >= blocks.length) return;
+      const id = next++;
+      const [start, end] = blocks[id];
+      const data = { n, dim, threshold, start, end, id } as Record<string, unknown>;
+      if (first) data.flatEmbeddings = flat // structured clone: each worker gets its own copy
+      w.postMessage({ type: "detectBlock", data });
     };
 
-    worker.postMessage(
-      {
-        type: "detect",
-        data: { flatEmbeddings: flat, n, dim, threshold, timestamps },
-      },
-      [flat.buffer],
-    );
+    for (let wi = 0; wi < count; wi++) {
+      const w = new Worker(workerUrl);
+      workers.push(w);
+      w.onmessage = (e) => {
+        const m = e.data;
+        if (m.type === "blockProgress") {
+          rowsDone.set(m.id, m.rows);
+          report();
+        } else if (m.type === "blockResults") {
+          results[m.id] = m.communities;
+          rowsDone.delete(m.id);
+          finishedRows += blocks[m.id][1] - blocks[m.id][0];
+          report();
+          if (--pending === 0) {
+            stop();
+            resolve(mergeCommunities(results.flat()));
+          } else dispatch(w, false);
+        }
+      };
+      w.onerror = (e) => {
+        stop();
+        reject(new Error(e.message ?? "Worker error during community detection"));
+      };
+      dispatch(w, true);
+    }
   });
 }
 
