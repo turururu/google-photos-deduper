@@ -13,13 +13,16 @@ import Typography from "@mui/material/Typography"
 import { buildThumbUrl } from "../lib/photo-url"
 import { scanIdenticalGroups, type IdenticalScan } from "../lib/identical-scan"
 import { summarizeTrash } from "../lib/trash-summary"
-import { planAll, filterPlans, type GroupPlan } from "../lib/identical-plan"
+import { planAll, planGroup, explainMisses, filterPlans, type GroupPlan, type Miss } from "../lib/identical-plan"
+import { DEFAULT_NEAR_EXACT } from "../lib/near-exact"
 import type { KeepOrder } from "../lib/duplicate-detector"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
 import type { DuplicateGroup, GpdMediaItem } from "../lib/types"
 import { useBlobUrl } from "./useBlobUrl"
 
 const SAMPLE_SIZE = 24
+const TIME_STEPS = [2, 5, 10, 30, 60, 300, 3600, 86400] // seconds
+const timeLabel = (s: number) => (s < 60 ? `${s} s` : s < 3600 ? `${s / 60} min` : s < 86400 ? `${s / 3600} h` : "1 day")
 
 function Thumb({ item }: { item: GpdMediaItem }) {
   const { blobUrl } = useBlobUrl(buildThumbUrl(item.thumb, { height: 200 }))
@@ -57,6 +60,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
   const [maxHamming, setMaxHamming] = useState(DEFAULT_PIXEL_THRESHOLDS.maxHamming)
   const [maxColorMae, setMaxColorMae] = useState(DEFAULT_PIXEL_THRESHOLDS.maxColorMae)
   const [maxCellDiff, setMaxCellDiff] = useState(DEFAULT_PIXEL_THRESHOLDS.maxCellDiff)
+  const [timeStep, setTimeStep] = useState(0)
   const [copyMsg, setCopyMsg] = useState<string | null>(null)
   const [replaceSelection, setReplaceSelection] = useState(true)
   const [includeMixed, setIncludeMixed] = useState(false)
@@ -87,14 +91,15 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  const meta = useMemo(() => ({ ...DEFAULT_NEAR_EXACT, maxTakenDiffMs: TIME_STEPS[timeStep] * 1000 }), [timeStep])
   const allPlans = useMemo(
     () =>
       scan
-        ? planAll(groups, mediaItems, scan, { maxHamming, maxColorMae, maxCellDiff }, { keepOrder, keptOverrides })
+        ? planAll(groups, mediaItems, scan, { maxHamming, maxColorMae, maxCellDiff }, { keepOrder, keptOverrides, meta })
         : [],
     // overrides are read once per scan/threshold change; fine while the dialog is open
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder]
+    [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder, meta]
   )
   const plans = useMemo(
     () => filterPlans(allPlans, groups, { includeMixed, minSimilarity: similarityIsReal ? minSimilarity : null }),
@@ -103,6 +108,33 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
   const fullyCount = plans.filter((p) => p.fully).length
   const mixedCount = plans.length - fullyCount
   const hiddenCount = allPlans.length - plans.length
+  // Why groups were not selected, and the closest near-misses to calibrate against.
+  const { reasons, misses } = useMemo(() => {
+    const reasons: Record<string, number> = {}
+    const misses: Miss[] = []
+    if (!scan) return { reasons, misses }
+    const final = new Set(plans.map((p) => p.groupId))
+    const bump = (r: string) => (reasons[r] = (reasons[r] ?? 0) + 1)
+    for (const g of groups) {
+      const scores = scan.pairs[g.id]
+      if (!scores || final.has(g.id)) continue
+      const opts = { keepOrder, existingKept: keptOverrides[g.id], meta }
+      const thresholds = { maxHamming, maxColorMae, maxCellDiff }
+      const plan = planGroup(g, mediaItems, scores, thresholds, opts)
+      if (!plan) continue
+      if (plan.trash.length > 0) {
+        bump(plan.fully || includeMixed ? "below similarity floor" : "mixed group (tick the box to include)")
+        continue
+      }
+      const ms = explainMisses(g, mediaItems, scores, thresholds, plan, opts)
+      if (ms.length === 0) continue
+      const closest = ms.reduce((a, b) => ((b.score?.cellDiff ?? Infinity) < (a.score?.cellDiff ?? Infinity) ? b : a))
+      bump(closest.reason === "no score" ? "thumbnail not comparable" : `${closest.reason} check`)
+      misses.push(closest)
+    }
+    misses.sort((a, b) => (a.score?.cellDiff ?? Infinity) - (b.score?.cellDiff ?? Infinity))
+    return { reasons, misses: misses.slice(0, 12) }
+  }, [scan, plans, groups, mediaItems, keepOrder, keptOverrides, meta, maxHamming, maxColorMae, maxCellDiff, includeMixed])
   const freed = useMemo(
     () => summarizeTrash(plans.flatMap((p) => p.trash.map((t) => mediaItems[t.key]).filter(Boolean))),
     [plans, mediaItems]
@@ -173,6 +205,11 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
                   .join(" · ")}
               </Typography>
             )}
+            <Typography variant="caption" component="div">
+              Max time between two photos: {timeLabel(TIME_STEPS[timeStep])} (raise only if copies lost their date, e.g. messenger saves)
+            </Typography>
+            <Slider size="small" min={0} max={TIME_STEPS.length - 1} step={1} value={timeStep}
+              onChange={(_, v) => setTimeStep(v as number)} />
             <Typography variant="caption">Max structure difference: {maxHamming} / 64 bits</Typography>
             <Slider size="small" min={0} max={8} step={1} value={maxHamming}
               onChange={(_, v) => setMaxHamming(v as number)} />
@@ -186,6 +223,40 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
               Previews are small and cannot show a blink. Open a few groups and use Flicker compare before
               trusting this.
             </Typography>
+            {Object.keys(reasons).length > 0 && (
+              <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>
+                Why other groups were not selected:{" "}
+                {Object.entries(reasons)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([k, n]) => `${k} ${n.toLocaleString()}`)
+                  .join(" · ")}
+              </Typography>
+            )}
+            {misses.length > 0 && (
+              <>
+                <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>
+                  Closest near-misses (kept photo left, not-selected photo right) — nothing here is selected:
+                </Typography>
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 2, mb: 1 }}>
+                  {misses.map((m) => (
+                    <Box key={m.key} sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 0.5 }}>
+                      <Box sx={{ display: "flex", gap: 0.5 }}>
+                        {mediaItems[m.against] && <Thumb item={mediaItems[m.against]} />}
+                        {mediaItems[m.key] && <Thumb item={mediaItems[m.key]} />}
+                      </Box>
+                      <Typography variant="caption" color="text.secondary" component="div">
+                        {m.reason}: {m.detail}
+                      </Typography>
+                      {m.score && (
+                        <Typography variant="caption" color="text.secondary">
+                          Δ {m.score.hamming} bits · {m.score.colorMae.toFixed(1)} colour · {m.score.cellDiff.toFixed(0)} local
+                        </Typography>
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              </>
+            )}
             <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>
               Loosest {sample.length} matches (kept photo left, trashed photo right) — check none differ:
             </Typography>
@@ -221,7 +292,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
                 kept: p.kept.map(desc),
                 trash: p.trash.map((t) => ({ ...desc(t.key), keptKey: t.keptKey, score: t.score })),
               }))
-            navigator.clipboard.writeText(JSON.stringify(data, null, 1)).then(
+            navigator.clipboard.writeText(JSON.stringify({ reasons, closestMisses: misses, plans: data }, null, 1)).then(
               () => setCopyMsg("Copied"),
               (e) => setCopyMsg(`Copy failed: ${e}`)
             )

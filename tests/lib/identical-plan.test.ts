@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { planGroup, provenIdentical } from "../../lib/identical-plan"
+import { planGroup, provenIdentical, explainMisses } from "../../lib/identical-plan"
+import { DEFAULT_NEAR_EXACT } from "../../lib/near-exact"
 
 const T = { maxHamming: 2, maxColorMae: 4, maxCellDiff: 24 }
 const mk = (k: string, o: any = {}) => ({
@@ -102,5 +103,25 @@ describe("applyPlans replace", () => {
     const r = applyPlans(new Set(["X", "G"]), { G: new Set(["k1"]) }, [{ groupId: "G", kept: ["k2"], trash: [], fully: true }], { replace: true })
     expect([...r.selected]).toEqual(["G"])
     expect([...r.kept.G].sort()).toEqual(["k1", "k2"])
+  })
+})
+
+describe("time window and explanations", () => {
+  const its = items([mk("a"), mk("b", { timestamp: 1_000_000 + 30_000 })])
+  const g = grp(["a", "b"])
+  const sc = [same("a", "b")]
+  it("default window rejects a 30 s gap; widening accepts it", () => {
+    expect(planGroup(g, its, sc, T, opts)!.trash).toHaveLength(0)
+    const wide = { ...DEFAULT_NEAR_EXACT, maxTakenDiffMs: 60_000 }
+    expect(planGroup(g, its, sc, T, { ...opts, meta: wide })!.trash).toHaveLength(1)
+  })
+  it("explains the failing check", () => {
+    const plan = planGroup(g, its, sc, T, opts)!
+    const m = explainMisses(g, its, sc, T, plan, opts)
+    expect(m[0]).toMatchObject({ key: "b", against: "a", reason: "time", detail: "30 s apart" })
+    const it2 = items([mk("a"), mk("b")])
+    const p2 = planGroup(g, it2, [diff("a", "b")], T, opts)!
+    expect(explainMisses(g, it2, [diff("a", "b")], T, p2, opts)[0].reason).toBe("structure")
+    expect(explainMisses(g, it2, [], T, planGroup(g, it2, [], T, opts)!, opts)[0].reason).toBe("no score")
   })
 })

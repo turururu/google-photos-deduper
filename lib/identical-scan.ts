@@ -1,6 +1,5 @@
 import type { DuplicateGroup, GpdMediaItem } from "./types";
 import { buildThumbUrl } from "./photo-url";
-import { pairMetadataOk } from "./near-exact";
 import {
   colorMae,
   computeFingerprint,
@@ -70,17 +69,15 @@ export interface PairScore {
 export interface IdenticalScan {
   groupsScanned: number;
   skipped: Record<string, number>; // reason -> groups
-  /** Raw pair scores (metadata-eligible pairs only); thresholds are applied later. */
+  /** Raw pair scores for all photo pairs; time/shape and thresholds are applied later. */
   pairs: Record<string, PairScore[]>; // groupId -> scores
 }
 
 export const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 /**
- * Scores every metadata-eligible pair (photos, taken within the window, same
- * shape) in each group. Only items that belong to at least one such pair are
- * fetched. Thresholds are applied afterwards by the planner so the UI can tune
- * them without refetching.
+ * Scores every photo pair in each group. Time/shape rules and thresholds are
+ * applied afterwards by the planner so the UI can tune them without refetching.
  */
 export async function scanIdenticalGroups(
   groups: DuplicateGroup[],
@@ -100,12 +97,14 @@ export async function scanIdenticalGroups(
       skip("size");
       continue;
     }
+    // Every photo pair is scored (time/shape are judged later by the planner so
+    // the UI can explain misses and tune the time window). Videos are never compared.
+    const photos = items.filter((i) => i.duration === undefined);
     const pairs: [GpdMediaItem, GpdMediaItem][] = [];
-    for (let i = 0; i < items.length; i++)
-      for (let j = i + 1; j < items.length; j++)
-        if (pairMetadataOk(items[i], items[j])) pairs.push([items[i], items[j]]);
+    for (let i = 0; i < photos.length; i++)
+      for (let j = i + 1; j < photos.length; j++) pairs.push([photos[i], photos[j]]);
     if (pairs.length === 0) {
-      skip("no comparable pair");
+      skip("fewer than 2 photos");
       continue;
     }
     work.push({ group: g, pairs });

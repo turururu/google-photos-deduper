@@ -1,6 +1,6 @@
 import { keepComparator, type KeepOrder } from "./duplicate-detector";
 import { pairKey, type IdenticalScan, type PairScore } from "./identical-scan";
-import { pairMetadataOk } from "./near-exact";
+import { DEFAULT_NEAR_EXACT, pairMetadataFailure, pairMetadataOk, type NearExactOptions } from "./near-exact";
 import type { PixelThresholds } from "./pixel-hash";
 import type { DuplicateGroup, GpdMediaItem } from "./types";
 
@@ -27,8 +27,9 @@ export function planGroup(
   items: Record<string, GpdMediaItem>,
   scores: PairScore[],
   thresholds: PixelThresholds,
-  opts: { keepOrder: KeepOrder; existingKept?: Set<string> },
+  opts: { keepOrder: KeepOrder; existingKept?: Set<string>; meta?: NearExactOptions },
 ): GroupPlan | null {
+  const meta = opts.meta ?? DEFAULT_NEAR_EXACT;
   const list = group.mediaKeys.map((k) => items[k]).filter(Boolean);
   if (list.length !== group.mediaKeys.length || list.length < 2) return null;
   const byPair = new Map(scores.map((s) => [pairKey(s.a, s.b), s]));
@@ -44,7 +45,7 @@ export function planGroup(
     let match: { rep: GpdMediaItem; score: PairScore } | null = null;
     for (const rep of reps) {
       const score = byPair.get(pairKey(item.mediaKey, rep.mediaKey));
-      if (score && pairMetadataOk(item, rep) && passes(score, thresholds)) {
+      if (score && pairMetadataOk(item, rep, meta) && passes(score, thresholds)) {
         match = { rep, score };
         break;
       }
@@ -65,7 +66,7 @@ export function planAll(
   items: Record<string, GpdMediaItem>,
   scan: IdenticalScan,
   thresholds: PixelThresholds,
-  opts: { keepOrder: KeepOrder; keptOverrides?: Record<string, Set<string>> },
+  opts: { keepOrder: KeepOrder; keptOverrides?: Record<string, Set<string>>; meta?: NearExactOptions },
 ): GroupPlan[] {
   const out: GroupPlan[] = [];
   for (const g of groups) {
@@ -74,6 +75,7 @@ export function planAll(
     const plan = planGroup(g, items, scores, thresholds, {
       keepOrder: opts.keepOrder,
       existingKept: opts.keptOverrides?.[g.id],
+      meta: opts.meta,
     });
     if (plan && plan.trash.length > 0) out.push(plan);
   }
@@ -142,4 +144,70 @@ export function filterPlans(
     if (opts.minSimilarity !== null && (sim.get(p.groupId) ?? 0) < opts.minSimilarity - 1e-6) return false;
     return true;
   });
+}
+
+
+export type MissReason = "no score" | "time" | "shape" | "structure" | "colour" | "local";
+
+export interface Miss {
+  key: string; // photo that stayed kept
+  against: string; // the earlier-ranked kept photo it came closest to
+  reason: MissReason; // first check that failed
+  detail: string;
+  score?: PairScore;
+}
+
+/**
+ * Why photos in a plan stayed kept: for each unlocked kept photo ranked after
+ * the first kept one, the closest earlier kept photo and the first check that
+ * rejected the match. Closest = smallest local difference; unscored last.
+ */
+export function explainMisses(
+  group: DuplicateGroup,
+  items: Record<string, GpdMediaItem>,
+  scores: PairScore[],
+  thresholds: PixelThresholds,
+  plan: GroupPlan,
+  opts: { keepOrder: KeepOrder; existingKept?: Set<string>; meta?: NearExactOptions },
+): Miss[] {
+  const meta = opts.meta ?? DEFAULT_NEAR_EXACT;
+  const byPair = new Map(scores.map((s) => [pairKey(s.a, s.b), s]));
+  const ranked = group.mediaKeys.map((k) => items[k]).filter(Boolean).sort(keepComparator(opts.keepOrder));
+  const keptSet = new Set(plan.kept);
+  const keptRanked = ranked.filter((i) => keptSet.has(i.mediaKey));
+  const out: Miss[] = [];
+  keptRanked.forEach((item, idx) => {
+    const locked = item.isFavorite === true || item.duration !== undefined || opts.existingKept?.has(item.mediaKey) === true;
+    if (locked || idx === 0) return;
+    let best: Miss | null = null;
+    let bestCell = Infinity;
+    for (const rep of keptRanked.slice(0, idx)) {
+      const score = byPair.get(pairKey(item.mediaKey, rep.mediaKey));
+      let miss: Miss;
+      const base = { key: item.mediaKey, against: rep.mediaKey, score };
+      const fail = pairMetadataFailure(item, rep, meta);
+      if (fail === "time") {
+        const secs = Math.round(Math.abs(item.timestamp - rep.timestamp) / 1000);
+        miss = { ...base, reason: "time", detail: Number.isFinite(secs) ? `${secs} s apart` : "no taken time" };
+      } else if (fail === "shape" || fail === "video") {
+        miss = { ...base, reason: "shape", detail: fail === "video" ? "video" : "size/orientation differs" };
+      } else if (!score) {
+        miss = { ...base, reason: "no score", detail: "thumbnail not comparable" };
+      } else if (score.hamming > thresholds.maxHamming) {
+        miss = { ...base, reason: "structure", detail: `${score.hamming} bits` };
+      } else if (score.colorMae > thresholds.maxColorMae) {
+        miss = { ...base, reason: "colour", detail: `${score.colorMae.toFixed(1)}` };
+      } else {
+        miss = { ...base, reason: "local", detail: `${score.cellDiff.toFixed(0)}` };
+      }
+      // Unscored pairs rank last; among the rest the closest picture wins.
+      const cell = score ? score.cellDiff : Infinity;
+      if (!best || cell < bestCell) {
+        best = miss;
+        bestCell = cell;
+      }
+    }
+    if (best) out.push(best);
+  });
+  return out;
 }

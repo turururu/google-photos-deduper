@@ -77,18 +77,26 @@ export function isNearExactCandidate(
  * same orientation and aspect within tolerance. Used per pair when only part
  * of a group is identical.
  */
+export function pairMetadataFailure(
+  a: GpdMediaItem,
+  b: GpdMediaItem,
+  opts: NearExactOptions = DEFAULT_NEAR_EXACT,
+): "video" | "time" | "shape" | null {
+  if (a.duration !== undefined || b.duration !== undefined) return "video";
+  // Missing times must fail: NaN would slip past a `>` comparison.
+  if (!Number.isFinite(a.timestamp) || !Number.isFinite(b.timestamp)) return "time";
+  if (Math.abs(a.timestamp - b.timestamp) > opts.maxTakenDiffMs) return "time";
+  if (!a.resWidth || !a.resHeight || !b.resWidth || !b.resHeight) return "shape";
+  const ra = a.resWidth / a.resHeight;
+  const rb = b.resWidth / b.resHeight;
+  if (ra >= 1 !== rb >= 1) return "shape";
+  return Math.abs(ra - rb) / ra <= opts.maxAspectDiff ? null : "shape";
+}
+
 export function pairMetadataOk(
   a: GpdMediaItem,
   b: GpdMediaItem,
   opts: NearExactOptions = DEFAULT_NEAR_EXACT,
 ): boolean {
-  if (a.duration !== undefined || b.duration !== undefined) return false;
-  // Missing times must fail: NaN would slip past a `>` comparison.
-  if (!Number.isFinite(a.timestamp) || !Number.isFinite(b.timestamp)) return false;
-  if (Math.abs(a.timestamp - b.timestamp) > opts.maxTakenDiffMs) return false;
-  if (!a.resWidth || !a.resHeight || !b.resWidth || !b.resHeight) return false;
-  const ra = a.resWidth / a.resHeight;
-  const rb = b.resWidth / b.resHeight;
-  if (ra >= 1 !== rb >= 1) return false;
-  return Math.abs(ra - rb) / ra <= opts.maxAspectDiff;
+  return pairMetadataFailure(a, b, opts) === null;
 }
