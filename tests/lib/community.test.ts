@@ -29,4 +29,23 @@ describe("community pieces", () => {
     expect(detectWorkerCount(1000, 1024, 3)).toBe(1)
     expect(detectWorkerCount(500_000, 1024, 16)).toBe(1)
   })
+  it("matches a brute-force reference on random data with planted copies", () => {
+    let seed = 7
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296) - 0.5
+    const n = 60, dim = 16
+    const rows: number[][] = []
+    for (let i = 0; i < n; i++) {
+      rows.push(i % 5 === 1 ? rows[i - 1].map((x) => x + rnd() * 0.02) : Array.from({ length: dim }, rnd))
+    }
+    const unit = rows.map(norm)
+    const f = Float32Array.from(unit.flat())
+    const threshold = 0.98
+    const dot = (a: number[], b: number[]) => a.reduce((s, x, k) => s + x * b[k], 0)
+    const ref: number[][] = []
+    for (let i = 0; i < n; i++) {
+      const c = unit.map((v, j) => [j, dot(unit[i], v)] as const).filter(([, d]) => d >= threshold)
+      if (c.length >= 2) ref.push(c.sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([j]) => j))
+    }
+    expect(mergeCommunities(extractRowCommunities(f, n, dim, 0, n, threshold))).toEqual(mergeCommunities(ref))
+  })
 })
