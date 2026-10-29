@@ -30,9 +30,9 @@ interface Props {
 }
 
 const LABEL: Record<ReviewStatus, { text: string; color: "success" | "warning" | "error" }> = {
-  matched: { text: "close match stays", color: "success" },
-  "no-match": { text: "no close match stays", color: "warning" },
-  "no-keeper": { text: "no copy stays", color: "error" },
+  matched: { text: "close match in library", color: "success" },
+  "no-match": { text: "no close match in library", color: "warning" },
+  "no-keeper": { text: "nothing left in library", color: "error" },
   conflict: { text: "kept by another group", color: "error" },
 }
 
@@ -44,11 +44,14 @@ function Side({ item, role, empty = "nothing" }: { item?: GpdMediaItem; role: "t
   return (
     <Box sx={{ width: 120 }}>
       <Typography variant="caption" sx={{ color, fontWeight: 600, display: "block" }}>
-        {role === "trash" ? "MOVES TO TRASH" : "STAYS"}
+        {role === "trash" ? "IN BIN (will be trashed)" : "IN LIBRARY (stays)"}
       </Typography>
       {item ? (
         <>
-          <Box sx={{ border: 2, borderColor: color, borderRadius: 0.5, lineHeight: 0, width: "fit-content" }}>
+          <Box
+            component={item.productUrl ? "a" : "div"}
+            {...(item.productUrl ? { href: item.productUrl, target: "_blank", rel: "noreferrer", title: "Open in Google Photos" } : {})}
+            sx={{ display: "block", border: 2, borderColor: color, borderRadius: 0.5, lineHeight: 0, width: "fit-content", cursor: item.productUrl ? "pointer" : "default" }}>
             <Thumb item={item} size={116} />
           </Box>
           <Typography variant="caption" color="text.secondary" component="div" noWrap title={item.fileName}>
@@ -133,7 +136,7 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
         {loading && <LinearProgress sx={{ mb: 1 }} />}
         {error && <Typography color="error" variant="body2">Could not load similarities: {error}</Typography>}
         <Typography variant="body2" sx={{ mb: 1 }}>
-          Every photo going to the trash is compared with the photos of its group that stay. It counts as covered when
+          Left: what is in the bin. Right: the closest photo that stays in your library (click a photo to open it in Google Photos). Each bin photo is compared with the photos of its group that stay. It counts as covered when
           one of them looks the same and has about the same resolution.{" "}
           {review.rows.length.toLocaleString()} in the bin: {review.counts.matched.toLocaleString()} covered
           {review.counts["no-match"] > 0 && `, ${review.counts["no-match"].toLocaleString()} with no close match`}
@@ -148,8 +151,8 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
         <Slider size="small" min={0} max={0.2} step={0.01} value={maxResDiff}
           onChange={(_, v) => setMaxResDiff(v as number)} />
         <ToggleButtonGroup size="small" exclusive value={filter} onChange={(_, v) => v && setFilter(v)} sx={{ my: 1 }}>
-          <ToggleButton value="problems">Candidates to restore</ToggleButton>
-          <ToggleButton value="all">All</ToggleButton>
+          <ToggleButton value="problems">No match in library</ToggleButton>
+          <ToggleButton value="all">All in bin</ToggleButton>
         </ToggleButtonGroup>
         {shown.slice(0, MAX_ROWS).map((r) => {
           const l = LABEL[r.status]
@@ -160,7 +163,7 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
               <Side
                 item={r.keeperKey ? mediaItems[r.keeperKey] : undefined}
                 role="stay"
-                empty={r.status === "conflict" ? "this photo is kept by another group" : "no photo stays"}
+                empty={r.status === "conflict" ? "this photo is kept by another group" : "nothing left in library"}
               />
               <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, alignItems: "flex-start" }}>
                 <Chip size="small" color={l.color} label={l.text} />
