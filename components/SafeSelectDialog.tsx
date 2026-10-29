@@ -199,7 +199,7 @@ export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keep
             )}
             {similarityIsReal ? (
               <>
-                <Typography variant="caption" component="div">Minimum group similarity: {minSimilarity > FLOOR_OFF ? `${Math.round(minSimilarity * 1000) / 10}%` : "off"} (most groups are 87–91%; the pixel check decides)</Typography>
+                <Typography variant="caption" component="div">Minimum group similarity: {minSimilarity > FLOOR_OFF ? `${Math.round(minSimilarity * 1000) / 10}%` : "off"} {forceOne ? "(keep-one mode: only this floor decides)" : "(most groups are 87–91%; the pixel check decides)"}</Typography>
                 <Slider size="small" min={FLOOR_OFF} max={1} step={0.005} value={minSimilarity}
                   onChange={(_, v) => setMinSimilarity(v as number)} />
               </>
