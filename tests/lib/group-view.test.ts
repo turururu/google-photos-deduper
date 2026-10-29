@@ -13,7 +13,7 @@ const groups: DuplicateGroup[] = [
   { id: "B", mediaKeys: ["b1", "b2", "b3"], originalMediaKey: "b1", similarity: 0.999 },
   { id: "C", mediaKeys: ["c1", "c2"], originalMediaKey: "c1", similarity: 0.995 },
 ]
-const BASE = { ...DEFAULTS, noFavorites: false }
+const BASE = { ...DEFAULTS, noFavorites: false, freesSpace: false }
 const ids = (p = {}) => applyViewPrefs(groups, items, { ...BASE, ...p }).map((g) => g.id)
 
 describe("applyViewPrefs", () => {

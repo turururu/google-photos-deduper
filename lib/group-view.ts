@@ -32,7 +32,7 @@ export const DEFAULT_VIEW_PREFS: ViewPrefs = {
   maxSimilarity: 1,
   onlyPairs: false,
   noFavorites: true,
-  freesSpace: false,
+  freesSpace: true,
   hideReviewed: false,
   selection: "all",
   takenFrom: "",
