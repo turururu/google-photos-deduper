@@ -141,6 +141,7 @@ export async function renderTimelapse(
   } finally {
     if (recorder.state !== "inactive") recorder.stop();
     await stopped;
+    stream.getTracks().forEach((t) => t.stop());
   }
   const ext = mime.startsWith("video/mp4") ? "mp4" : "webm";
   return { blob: new Blob(chunks, { type: `video/${ext}` }), ext };
@@ -228,13 +229,14 @@ export async function writeGroupClips(
   clips: Clip[],
   onProgress?: (done: number, total: number) => void,
   signal?: AbortSignal,
-): Promise<{ files: number; bytes: number; dated: boolean }> {
+): Promise<{ files: number; bytes: number; dated: boolean; aborted: boolean }> {
   const total = clips.reduce((s, c) => s + c.items.length, 0);
   let done = 0;
   let bytes = 0;
   let dated = true;
   const used = new Set<string>();
   const stamps: { name: string; taken: number }[] = [];
+  let aborted = false;
   try {
     for (const clip of clips) {
       signal?.throwIfAborted();
@@ -257,6 +259,10 @@ export async function writeGroupClips(
       done += clip.items.length;
       onProgress?.(done, total);
     }
+  } catch (e) {
+    // A user cancel is a normal stop: keep what was saved so far.
+    if (!signal?.aborted) throw e;
+    aborted = true;
   } finally {
     // Browsers can't set a file's modified time, so ship a script that does.
     const script = (await dir.getFileHandle("set-dates.sh", { create: true }));
@@ -264,5 +270,5 @@ export async function writeGroupClips(
     await sw.write(new Blob([buildTouchScript(stamps)]));
     await sw.close();
   }
-  return { files: stamps.length, bytes, dated };
+  return { files: stamps.length, bytes, dated, aborted };
 }

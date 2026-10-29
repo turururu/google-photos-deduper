@@ -39,6 +39,8 @@ import { passingGroupIds, scanIdenticalGroups } from "../lib/identical-scan"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
 import { SafeSelectDialog } from "../components/SafeSelectDialog"
 import { TrashRestoreDialog, type TrashItem } from "../components/TrashRestoreDialog"
+import { appendTrashLog, markRestored, trashLogToCsv, type TrashLogEntry } from "../lib/trash-log"
+import { summarizeTrash } from "../lib/trash-summary"
 import { selectDefaultKeep, type KeepOrder } from "../lib/duplicate-detector"
 import { ScanLogger } from "../lib/scan-log"
 import theme from "../lib/theme"
@@ -240,6 +242,8 @@ export default function App() {
   const [viewPrefs, setViewPrefs] = useState<ViewPrefs>(DEFAULT_VIEW_PREFS)
   const [keepOrder, setKeepOrder] = useState<KeepOrder>("oldest")
   const [trashOpen, setTrashOpen] = useState(false)
+  const [trashLog, setTrashLog] = useState<TrashLogEntry[]>([])
+  const trashLogLoadedRef = useRef(false)
   const [trashItems, setTrashItems] = useState<TrashItem[]>([])
   const [trashNext, setTrashNext] = useState<string | null>(null)
   const [trashLoading, setTrashLoading] = useState(false)
@@ -394,7 +398,8 @@ export default function App() {
             }
           } else if (result.command === "fetchSizes") {
             if (result.success) {
-              dispatch({ type: "SIZES_LOADED", sizes: (result.data as { sizes: Record<string, number> }).sizes })
+              const d = result.data as { sizes: Record<string, number>; space?: Record<string, { spaceTaken?: number; takesUpSpace?: boolean | null }> }
+              dispatch({ type: "SIZES_LOADED", sizes: d.sizes, space: d.space })
             } else {
               console.warn("[GPD] fetching file sizes failed:", result.error)
               sizesRequestRef.current = null // allow a retry on the next state change
@@ -407,6 +412,7 @@ export default function App() {
               // Set undo data from the snapshot captured before trash
               if (preTrashSnapshotRef.current && pendingDedupKeysRef.current) {
                 const snapshot = preTrashSnapshotRef.current
+                setTrashLog((log) => appendTrashLog(log, trashedKeys, snapshot.mediaItems))
                 // Undo only what was actually trashed (items deleted since the scan are skipped).
                 const dedupKeys = trashedKeys
                   .map((k) => snapshot.mediaItems[k]?.dedupKey)
@@ -438,6 +444,7 @@ export default function App() {
               setRestoring(false)
               if (result.success) {
                 setTrashItems((prev) => prev.filter((i) => !pending.keys.has(i.dedupKey)))
+                setTrashLog((log) => markRestored(log, pending.keys))
                 setRestoreMessage(`Restored ${pending.keys.size} items. Re-scan to see them in groups again.`)
               } else {
                 setTrashError(result.error || "Restore failed")
@@ -575,8 +582,10 @@ export default function App() {
   // Load saved settings and results on mount
   useEffect(() => {
     chrome.storage.local.get(
-      ["settings", "scanResults", "selections", "viewPrefs", "reviewed", "keepOrder"],
+      ["settings", "scanResults", "selections", "viewPrefs", "reviewed", "keepOrder", "trashLog"],
       (result: Partial<StoredState>) => {
+        if (result.trashLog) setTrashLog(result.trashLog)
+        trashLogLoadedRef.current = true
         if (result.keepOrder === "newest") setKeepOrder("newest")
         if (result.viewPrefs) setViewPrefs({ ...DEFAULT_VIEW_PREFS, ...persistablePrefs(result.viewPrefs) })
         // Group ids are positional ("group-N"), so marks are only valid for the scan they were made on.
@@ -748,6 +757,10 @@ export default function App() {
   }, [selectedGroupIds, keptOverrides, state.status, groups.length])
 
   useEffect(() => {
+    if (trashLogLoadedRef.current) chrome.storage.local.set({ trashLog })
+  }, [trashLog])
+
+  useEffect(() => {
     if (storageChecked) chrome.storage.local.set({ keepOrder })
   }, [keepOrder, storageChecked])
 
@@ -772,7 +785,7 @@ export default function App() {
     if (state.status !== "results" || sizesRequestRef.current === String(state.scanDate)) return
     const missing = new Set<string>()
     for (const g of state.groups)
-      for (const k of g.mediaKeys) if (state.mediaItems[k] && state.mediaItems[k].size === undefined) missing.add(k)
+      for (const k of g.mediaKeys) if (state.mediaItems[k] && (state.mediaItems[k].size === undefined || state.mediaItems[k].takesUpSpace === undefined)) missing.add(k)
     if (missing.size === 0) return
     const requestId = generateRequestId()
     sizesRequestRef.current = String(state.scanDate)
@@ -931,6 +944,7 @@ export default function App() {
   }, [trashConfirm, state])
 
   const [backupError, setBackupError] = useState<string | null>(null)
+  const videoAbortRef = useRef<AbortController | null>(null)
   const [videoProgress, setVideoProgress] = useState<[number, number] | null>(null)
   const handleDownloadVideo = useCallback(async () => {
     if (!trashConfirm || state.status !== "results") return
@@ -968,10 +982,12 @@ export default function App() {
     setVideoProgress([0, total])
     try {
       if (identical.size > 0) setBackupError(`${identical.size} identical groups were left out of the video.`)
-      const r = await writeGroupClips(dir, clips, (d, t) => setVideoProgress([d, t]))
+      const ctrl = new AbortController()
+      videoAbortRef.current = ctrl
+      const r = await writeGroupClips(dir, clips, (d, t) => setVideoProgress([d, t]), ctrl.signal)
       const MB = (r.bytes / 1e6).toFixed(1)
       setBackupError(
-        `Saved ${r.files} of ${clips.length} dated videos (${MB} MB) to the folder. In that folder run: sh set-dates.sh (sets file dates to the originals), then drag them into photos.google.com.` +
+        `${r.aborted ? "Stopped. " : ""}Saved ${r.files} of ${clips.length} dated videos (${MB} MB) to the folder. In that folder run: sh set-dates.sh (sets file dates to the originals), then drag them into photos.google.com.` +
           (r.dated ? "" : " This browser can't embed dates (WebM): dates may be wrong; the filename carries the taken date.") +
           (identical.size > 0 ? ` ${identical.size} identical groups were left out.` : "")
       )
@@ -979,6 +995,7 @@ export default function App() {
       console.error("[GPD] video backup failed", e)
       setBackupError(`Video backup failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
+      videoAbortRef.current = null
       setVideoProgress(null)
     }
   }, [trashConfirm, state])
@@ -1049,6 +1066,7 @@ export default function App() {
       requestId: generateRequestId(),
       args: { dedupKeys: undoData.dedupKeys }
     })
+    setTrashLog((log) => markRestored(log, undoData.dedupKeys))
     setUndoData(null)
   }, [undoData])
 
@@ -1252,6 +1270,16 @@ export default function App() {
               restoreMessage={restoreMessage}
               onLoadMore={() => loadTrash(trashNext)}
               onRestore={handleRestoreFromTrash}
+              loggedCount={trashLog.filter((e) => !e.restored).length}
+              onRestoreLogged={() => handleRestoreFromTrash(trashLog.filter((e) => !e.restored).map((e) => e.dedupKey))}
+              onExportLog={() => {
+                const url = URL.createObjectURL(new Blob([trashLogToCsv(trashLog)], { type: "text/csv" }))
+                const a = document.createElement("a")
+                a.href = url
+                a.download = `trashed-by-deduper-${new Date().toISOString().slice(0, 10)}.csv`
+                a.click()
+                setTimeout(() => URL.revokeObjectURL(url), 10_000)
+              }}
               onClose={() => setTrashOpen(false)}
             />
             <ViewControls
@@ -1317,6 +1345,17 @@ export default function App() {
             {trashConfirm?.dedupKeys.length !== 1 ? "s" : ""} to trash? You can
             restore them from the Google Photos trash.
           </DialogContentText>
+          {!!trashConfirm && state.status === "results" && (() => {
+            const sum = summarizeTrash(
+              trashConfirm.mediaKeysToTrash.map((k) => state.mediaItems[k]).filter((i): i is GpdMediaItem => !!i)
+            )
+            return (
+              <DialogContentText sx={{ mt: 1 }} variant="body2">
+                About {(sum.bytes / 1e9).toFixed(2)} GB counted against your storage, freed once Trash is
+                emptied ({sum.known.toLocaleString()} of {sum.items.toLocaleString()} items with known size).
+              </DialogContentText>
+            )
+          })()}
           {!!trashConfirm && trashConfirm.unreviewedGroups > 0 && (
             <DialogContentText sx={{ mt: 2 }} color="warning.main">
               {trashConfirm.unreviewedGroups.toLocaleString()} of these groups were never reviewed.
@@ -1341,6 +1380,11 @@ export default function App() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setTrashConfirm(null)}>Cancel</Button>
+          {videoProgress !== null && videoAbortRef.current && (
+            <Button color="warning" onClick={() => videoAbortRef.current?.abort()}>
+              Cancel recording
+            </Button>
+          )}
           <Button onClick={handleDownloadVideo} disabled={videoProgress !== null}>
             {videoProgress
               ? `Recording ${videoProgress[0]}/${videoProgress[1]}…`

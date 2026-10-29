@@ -195,6 +195,8 @@ export interface GpdMediaItem {
   resHeight?: number;
   fileName?: string;
   size?: number;
+  spaceTaken?: number; // bytes counted against storage quota
+  takesUpSpace?: boolean | null;
   isOwned?: boolean;
   isOriginalQuality?: boolean | null;
   /**
@@ -238,6 +240,7 @@ export interface StoredState {
   reviewed?: { scanDate?: number; ids: string[] };
   viewPrefs?: import("./group-view").ViewPrefs;
   keepOrder?: "oldest" | "newest";
+  trashLog?: import("./trash-log").TrashLogEntry[];
 }
 
 export interface ScanSettings {

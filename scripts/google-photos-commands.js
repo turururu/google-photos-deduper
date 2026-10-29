@@ -447,13 +447,19 @@ async function fetchSizes(requestId, args) {
   try {
     const keys = args.mediaKeys || []
     const sizes = {}
+    const space = {}
     for (const chunk of chunkArray(keys, 500)) {
       const infos = await window.gptkApi.getBatchMediaInfo(chunk)
       for (const info of infos || []) {
-        if (info?.mediaKey && typeof info.size === "number") sizes[info.mediaKey] = info.size
+        if (!info?.mediaKey) continue
+        if (typeof info.size === "number") sizes[info.mediaKey] = info.size
+        space[info.mediaKey] = {
+          spaceTaken: typeof info.spaceTaken === "number" ? info.spaceTaken : undefined,
+          takesUpSpace: info.takesUpSpace ?? null
+        }
       }
     }
-    postResult("fetchSizes", requestId, { sizes })
+    postResult("fetchSizes", requestId, { sizes, space })
   } catch (error) {
     console.error("[GPD] fetchSizes error:", error)
     postError("fetchSizes", requestId, error)

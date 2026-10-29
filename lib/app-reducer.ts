@@ -77,7 +77,11 @@ export type AppAction =
       groups: DuplicateGroup[]
       totalItems: number
     }
-  | { type: "SIZES_LOADED"; sizes: Record<string, number> }
+  | {
+      type: "SIZES_LOADED"
+      sizes: Record<string, number>
+      space?: Record<string, { spaceTaken?: number; takesUpSpace?: boolean | null }>
+    }
   | { type: "TRASH_PROGRESS"; trashedSoFar: number }
   | { type: "TRASH_COMPLETE"; trashedKeys: string[] }
   | { type: "TRASH_ERROR"; error: string }
@@ -209,6 +213,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const mediaItems = { ...state.mediaItems }
       for (const [k, size] of Object.entries(action.sizes)) {
         if (mediaItems[k]) mediaItems[k] = { ...mediaItems[k], size }
+      }
+      for (const [k, sp] of Object.entries(action.space ?? {})) {
+        if (mediaItems[k]) mediaItems[k] = { ...mediaItems[k], ...sp }
       }
       return { ...state, mediaItems }
     }

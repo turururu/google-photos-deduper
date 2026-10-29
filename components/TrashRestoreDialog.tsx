@@ -30,11 +30,15 @@ interface Props {
   restoreMessage: string | null
   onLoadMore: () => void
   onRestore: (dedupKeys: string[]) => void
+  loggedCount: number
+  onRestoreLogged: () => void
+  onExportLog: () => void
   onClose: () => void
 }
 
 export function TrashRestoreDialog({
-  open, items, loading, error, hasMore, restoring, restoreMessage, onLoadMore, onRestore, onClose
+  open, items, loading, error, hasMore, restoring, restoreMessage, onLoadMore, onRestore, onClose,
+  loggedCount, onRestoreLogged, onExportLog
 }: Props) {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   useEffect(() => {
@@ -60,7 +64,13 @@ export function TrashRestoreDialog({
         </Typography>
         {error && <Typography color="error">{error}</Typography>}
         {restoreMessage && <Typography color="success.main">{restoreMessage}</Typography>}
-        <Box sx={{ display: "flex", gap: 1, my: 1 }}>
+        <Box sx={{ display: "flex", gap: 1, my: 1, flexWrap: "wrap" }}>
+          <Button size="small" variant="outlined" disabled={restoring || loggedCount === 0} onClick={onRestoreLogged}>
+            Restore everything this tool trashed ({loggedCount})
+          </Button>
+          <Button size="small" variant="outlined" disabled={loggedCount === 0} onClick={onExportLog}>
+            Export log (CSV)
+          </Button>
           <Button size="small" disabled={restoring} onClick={() => setPicked(new Set(items.map((i) => i.mediaKey)))}>
             Select all loaded ({items.length})
           </Button>
