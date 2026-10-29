@@ -27,7 +27,7 @@ export function planGroup(
   items: Record<string, GpdMediaItem>,
   scores: PairScore[],
   thresholds: PixelThresholds,
-  opts: { keepOrder: KeepOrder; existingKept?: Set<string>; meta?: NearExactOptions },
+  opts: { keepOrder: KeepOrder; existingKept?: Set<string>; meta?: NearExactOptions; forceOne?: boolean },
 ): GroupPlan | null {
   const meta = opts.meta ?? DEFAULT_NEAR_EXACT;
   const list = group.mediaKeys.map((k) => items[k]).filter(Boolean);
@@ -42,6 +42,19 @@ export function planGroup(
   const trash: GroupPlan["trash"] = [];
   for (const item of ranked) {
     if (isLocked(item)) continue;
+    if (opts.forceOne) {
+      // No pixel/time check: the best photo stays, everything else goes.
+      if (reps.length === 0) {
+        reps.push(item);
+        continue;
+      }
+      const rep = reps[0];
+      const score = byPair.get(pairKey(item.mediaKey, rep.mediaKey)) ?? {
+        a: rep.mediaKey, b: item.mediaKey, hamming: NaN, colorMae: NaN, cellDiff: NaN,
+      };
+      trash.push({ key: item.mediaKey, keptKey: rep.mediaKey, score });
+      continue;
+    }
     let match: { rep: GpdMediaItem; score: PairScore } | null = null;
     for (const rep of reps) {
       const score = byPair.get(pairKey(item.mediaKey, rep.mediaKey));
@@ -66,13 +79,14 @@ export function planAll(
   items: Record<string, GpdMediaItem>,
   scan: IdenticalScan,
   thresholds: PixelThresholds,
-  opts: { keepOrder: KeepOrder; keptOverrides?: Record<string, Set<string>>; meta?: NearExactOptions },
+  opts: { keepOrder: KeepOrder; keptOverrides?: Record<string, Set<string>>; meta?: NearExactOptions; forceOne?: boolean },
 ): GroupPlan[] {
   const out: GroupPlan[] = [];
   for (const g of groups) {
-    const scores = scan.pairs[g.id];
+    const scores = scan.pairs[g.id] ?? (opts.forceOne ? [] : undefined);
     if (!scores) continue;
     const plan = planGroup(g, items, scores, thresholds, {
+      forceOne: opts.forceOne,
       keepOrder: opts.keepOrder,
       existingKept: opts.keptOverrides?.[g.id],
       meta: opts.meta,

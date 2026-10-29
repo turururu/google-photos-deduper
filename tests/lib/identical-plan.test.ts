@@ -141,3 +141,16 @@ describe("time window and explanations", () => {
     expect(explainMisses(g, it2, [], T, planGroup(g, it2, [], T, opts)!, opts)[0].reason).toBe("no score")
   })
 })
+
+describe("planGroup forceOne", () => {
+  it("keeps exactly one photo and trashes the rest without pixel proof", async () => {
+    const { planGroup } = await import("../../lib/identical-plan")
+    const mk = (k: string) => ({ mediaKey: k, dedupKey: k, thumb: "", timestamp: 1, resWidth: 10, resHeight: 10 }) as any
+    const items = { a: mk("a"), b: mk("b"), c: mk("c") }
+    const g = { id: "g", mediaKeys: ["a", "b", "c"], originalMediaKey: "a", similarity: 0.9 }
+    const p = planGroup(g, items, [], { maxHamming: 2, maxColorMae: 4, maxCellDiff: 24 }, { keepOrder: "oldest", forceOne: true })!
+    expect(p.kept).toHaveLength(1)
+    expect(p.trash).toHaveLength(2)
+    expect(p.fully).toBe(true)
+  })
+})

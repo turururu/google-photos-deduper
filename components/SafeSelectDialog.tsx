@@ -56,6 +56,7 @@ export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keep
   const [copyMsg, setCopyMsg] = useState<string | null>(null)
   const [replaceSelection, setReplaceSelection] = useState(true)
   const [includeMixed, setIncludeMixed] = useState(false)
+  const [forceOne, setForceOne] = useState(false)
   const [minSimilarity, setMinSimilarity] = useState(FLOOR_OFF)
   // Scans from before real similarity was stored give every group the same value.
   const similarityIsReal = useMemo(
@@ -88,11 +89,11 @@ export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keep
   const allPlans = useMemo(
     () =>
       scan
-        ? planAll(groups, mediaItems, scan, { maxHamming, maxColorMae, maxCellDiff }, { keepOrder, keptOverrides, meta })
+        ? planAll(groups, mediaItems, scan, { maxHamming, maxColorMae, maxCellDiff }, { keepOrder, keptOverrides, meta, forceOne })
         : [],
     // overrides are read once per scan/threshold change; fine while the dialog is open
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder, meta]
+    [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder, meta, forceOne]
   )
   const floor = effectiveFloor(minSimilarity, similarityIsReal)
   const plans = useMemo(
@@ -184,6 +185,16 @@ export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keep
               control={<Checkbox size="small" checked={includeMixed} onChange={(e) => setIncludeMixed(e.target.checked)} />}
               label="Also pick identical copies inside mixed groups (the different photos stay)"
             />
+            <FormControlLabel
+              control={<Checkbox size="small" checked={forceOne} onChange={(e) => setForceOne(e.target.checked)} />}
+              label="Keep only ONE photo per group (skips the pixel and time checks; set the similarity floor first)"
+            />
+            {forceOne && (
+              <Typography variant="caption" color="warning.main" component="div">
+                Every other photo in the matching groups goes to the bin, even if it differs (bursts, different
+                moments). Review the bin before trashing: backups are made for anything not proven identical.
+              </Typography>
+            )}
             {similarityIsReal ? (
               <>
                 <Typography variant="caption" component="div">Minimum group similarity: {minSimilarity > FLOOR_OFF ? `${Math.round(minSimilarity * 1000) / 10}%` : "off"} (most groups are 87–91%; the pixel check decides)</Typography>
