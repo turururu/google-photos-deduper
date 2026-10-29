@@ -42,6 +42,8 @@ import { SafeSelectDialog } from "../components/SafeSelectDialog"
 import { TrashRestoreDialog, type TrashItem } from "../components/TrashRestoreDialog"
 import { appendTrashLog, markRestored, trashLogToCsv, type TrashLogEntry } from "../lib/trash-log"
 import { summarizeTrash } from "../lib/trash-summary"
+import { reviewTrash } from "../lib/trash-review"
+import { TrashReviewDialog } from "../components/TrashReviewDialog"
 import { selectDefaultKeep, type KeepOrder } from "../lib/duplicate-detector"
 import { ScanLogger } from "../lib/scan-log"
 import theme from "../lib/theme"
@@ -923,6 +925,34 @@ export default function App() {
     setTrashConfirm({ dedupKeys, mediaKeysToTrash, fullyTrashedGroups, unreviewedGroups })
   }, [state, trashableIds, reviewedIds, getKept])
 
+  const [reviewBinOpen, setReviewBinOpen] = useState(false)
+  const binGroups = useMemo(() => {
+    if (!trashConfirm || state.status !== "results") return []
+    const trashSet = new Set(trashConfirm.mediaKeysToTrash)
+    return state.groups.filter((g) => g.mediaKeys.some((k) => trashSet.has(k)))
+  }, [trashConfirm, state])
+  // Photos the bin would trash that another marked group keeps: never allowed.
+  const binConflicts = useMemo(
+    () =>
+      state.status === "results"
+        ? reviewTrash(binGroups, state.mediaItems, getKept, null, DEFAULT_PIXEL_THRESHOLDS).counts.conflict
+        : 0,
+    [binGroups, state, getKept]
+  )
+  const handleBinKeepOnly = useCallback((keys: string[]) => {
+    const keep = new Set(keys)
+    setTrashConfirm((c) => {
+      if (!c) return c
+      const idx = c.mediaKeysToTrash.map((k, i) => (keep.has(k) ? i : -1)).filter((i) => i >= 0)
+      return {
+        ...c,
+        dedupKeys: idx.map((i) => c.dedupKeys[i]),
+        mediaKeysToTrash: idx.map((i) => c.mediaKeysToTrash[i]),
+        fullyTrashedGroups: 0, // proven photos always have a kept copy
+      }
+    })
+  }, [])
+
   const [backupProgress, setBackupProgress] = useState<[number, number] | null>(null)
   const handleDownloadBackup = useCallback(async () => {
     if (!trashConfirm || state.status !== "results") return
@@ -1411,6 +1441,12 @@ export default function App() {
           {backupError && (
             <DialogContentText sx={{ mt: 1 }} color="error">{backupError}</DialogContentText>
           )}
+          {binConflicts > 0 && (
+            <DialogContentText sx={{ mt: 2 }} color="error">
+              {binConflicts} photo{binConflicts !== 1 ? "s are" : " is"} marked in one group but kept by another. Open
+              Review bin to see them; trashing is blocked until that is fixed.
+            </DialogContentText>
+          )}
           {!!trashConfirm?.fullyTrashedGroups && (
             <DialogContentText sx={{ mt: 2 }} color="error">
               {trashConfirm.fullyTrashedGroups} group
@@ -1426,6 +1462,7 @@ export default function App() {
               Cancel recording
             </Button>
           )}
+          <Button onClick={() => setReviewBinOpen(true)}>Review bin</Button>
           <Button onClick={handleDownloadVideo} disabled={videoProgress !== null}>
             {videoProgress
               ? `Recording ${videoProgress[0]}/${videoProgress[1]}…`
@@ -1438,13 +1475,24 @@ export default function App() {
           </Button>
           <Button
             onClick={handleTrashConfirmed}
-            disabled={backupProgress !== null || videoProgress !== null}
+            disabled={backupProgress !== null || videoProgress !== null || binConflicts > 0}
             variant="contained"
             color="error">
             Move to Trash
           </Button>
         </DialogActions>
       </Dialog>
+
+      {state.status === "results" && (
+        <TrashReviewDialog
+          open={reviewBinOpen && !!trashConfirm}
+          groups={binGroups}
+          mediaItems={state.mediaItems}
+          keptOf={getKept}
+          onClose={() => setReviewBinOpen(false)}
+          onKeepOnly={handleBinKeepOnly}
+        />
+      )}
 
       {/* Undo trash snackbar */}
       <Snackbar

@@ -18,23 +18,12 @@ import { DEFAULT_NEAR_EXACT } from "../lib/near-exact"
 import type { KeepOrder } from "../lib/duplicate-detector"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
 import type { DuplicateGroup, GpdMediaItem } from "../lib/types"
-import { useBlobUrl } from "./useBlobUrl"
+import { Thumb } from "./Thumb"
 
 const SAMPLE_SIZE = 24
 const TIME_STEPS = [2, 5, 10, 30, 60, 300, 3600, 86400] // seconds
 const stepForWindow = (sec = 0) => Math.max(0, TIME_STEPS.findIndex((t) => t >= sec))
 const timeLabel = (s: number) => (s < 60 ? `${s} s` : s < 3600 ? `${s / 60} min` : s < 86400 ? `${s / 3600} h` : "1 day")
-
-function Thumb({ item }: { item: GpdMediaItem }) {
-  const { blobUrl } = useBlobUrl(buildThumbUrl(item.thumb, { height: 200 }))
-  return (
-    <Box
-      component="img"
-      src={blobUrl}
-      sx={{ height: 80, width: 80, objectFit: "cover", borderRadius: 0.5, bgcolor: "action.hover" }}
-    />
-  )
-}
 
 interface Props {
   open: boolean
