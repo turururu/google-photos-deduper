@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Box from "@mui/material/Box"
 import Button from "@mui/material/Button"
 import Chip from "@mui/material/Chip"
@@ -7,12 +7,12 @@ import DialogActions from "@mui/material/DialogActions"
 import DialogContent from "@mui/material/DialogContent"
 import DialogTitle from "@mui/material/DialogTitle"
 import LinearProgress from "@mui/material/LinearProgress"
+import Slider from "@mui/material/Slider"
 import ToggleButton from "@mui/material/ToggleButton"
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup"
 import Typography from "@mui/material/Typography"
-import { scanIdenticalGroups, type IdenticalScan } from "../lib/identical-scan"
-import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
-import { reviewTrash, type ReviewStatus } from "../lib/trash-review"
+import { EmbeddingCache } from "../lib/embedding-cache"
+import { DEFAULT_REVIEW_LIMITS, reviewTrash, type ReviewStatus } from "../lib/trash-review"
 import type { DuplicateGroup, GpdMediaItem } from "../lib/types"
 import { Thumb } from "./Thumb"
 
@@ -30,101 +30,146 @@ interface Props {
 }
 
 const LABEL: Record<ReviewStatus, { text: string; color: "success" | "warning" | "error" }> = {
-  proven: { text: "identical to kept", color: "success" },
-  unproven: { text: "not proven", color: "warning" },
-  "no-keeper": { text: "no copy kept", color: "error" },
+  matched: { text: "close match stays", color: "success" },
+  "no-match": { text: "no close match stays", color: "warning" },
+  "no-keeper": { text: "no copy stays", color: "error" },
   conflict: { text: "kept by another group", color: "error" },
 }
 
 const MAX_ROWS = 200
+const pct = (x: number, digits = 1) => `${(x * 100).toFixed(digits)}%`
+
+function Side({ item, role }: { item?: GpdMediaItem; role: "trash" | "stay" }) {
+  const color = role === "trash" ? "error.main" : "success.main"
+  return (
+    <Box sx={{ width: 120 }}>
+      <Typography variant="caption" sx={{ color, fontWeight: 600, display: "block" }}>
+        {role === "trash" ? "MOVES TO TRASH" : "STAYS"}
+      </Typography>
+      {item ? (
+        <>
+          <Box sx={{ border: 2, borderColor: color, borderRadius: 0.5, lineHeight: 0, width: "fit-content" }}>
+            <Thumb item={item} size={116} />
+          </Box>
+          <Typography variant="caption" color="text.secondary" component="div" noWrap title={item.fileName}>
+            {item.fileName ?? ""}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" component="div">
+            {item.resWidth && item.resHeight ? `${item.resWidth}×${item.resHeight}` : "size unknown"}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" component="div">
+            {Number.isFinite(item.timestamp) ? new Date(item.timestamp).toLocaleString() : "no taken time"}
+          </Typography>
+        </>
+      ) : (
+        <Box sx={{ height: 116, display: "flex", alignItems: "center" }}>
+          <Typography variant="caption" color="error">nothing</Typography>
+        </Box>
+      )}
+    </Box>
+  )
+}
 
 export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, onClose, onKeepOnly }: Props) {
-  const [scan, setScan] = useState<IdenticalScan | null>(null)
-  const [progress, setProgress] = useState<[number, number] | null>(null)
+  const [embeddings, setEmbeddings] = useState<Map<string, Float32Array> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<"all" | "problems">("problems")
-  const abortRef = useRef<AbortController | null>(null)
+  const [minSimilarity, setMinSimilarity] = useState(DEFAULT_REVIEW_LIMITS.minSimilarity)
+  const [maxResDiff, setMaxResDiff] = useState(DEFAULT_REVIEW_LIMITS.maxResDiff)
 
   useEffect(() => {
     if (!open) return
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
-    setScan(null)
+    let cancelled = false
+    setEmbeddings(null)
     setError(null)
-    setProgress([0, 0])
-    scanIdenticalGroups(groups, mediaItems, {
-      signal: ctrl.signal,
-      onProgress: (d, t) => setProgress([d, t]),
-    })
-      .then((s) => !ctrl.signal.aborted && setScan(s))
-      .catch((e) => !ctrl.signal.aborted && setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => !ctrl.signal.aborted && setProgress(null))
-    return () => ctrl.abort()
-    // groups/mediaItems are read once per open
+    ;(async () => {
+      const cache = await EmbeddingCache.open()
+      try {
+        const keys = [...new Set(groups.flatMap((g) => g.mediaKeys))]
+        const vecs = await cache.getMany(keys)
+        const map = new Map<string, Float32Array>()
+        keys.forEach((k, i) => vecs[i] && map.set(k, vecs[i]!))
+        if (!cancelled) setEmbeddings(map)
+      } finally {
+        cache.close()
+      }
+    })().catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+    return () => {
+      cancelled = true
+    }
+    // groups are read once per open
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   const review = useMemo(
-    () => reviewTrash(groups, mediaItems, keptOf, trashSet, scan, DEFAULT_PIXEL_THRESHOLDS),
-    [groups, mediaItems, keptOf, trashSet, scan]
+    () => reviewTrash(groups, mediaItems, keptOf, trashSet, embeddings, { minSimilarity, maxResDiff }),
+    [groups, mediaItems, keptOf, trashSet, embeddings, minSimilarity, maxResDiff]
   )
-  const shown = review.rows.filter((r) => filter === "all" || r.status !== "proven")
+  const shown = review.rows.filter((r) => filter === "all" || r.status !== "matched")
   const binKeys = review.rows.map((r) => r.key)
-  const provenKeys = review.rows.filter((r) => r.status === "proven").map((r) => r.key)
+  const matchedKeys = review.rows.filter((r) => r.status === "matched").map((r) => r.key)
+  const loading = !embeddings && !error
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Review bin</DialogTitle>
       <DialogContent>
-        {progress && <LinearProgress sx={{ mb: 1 }} />}
-        {error && <Typography color="error" variant="body2">Check failed: {error}</Typography>}
+        {loading && <LinearProgress sx={{ mb: 1 }} />}
+        {error && <Typography color="error" variant="body2">Could not load similarities: {error}</Typography>}
         <Typography variant="body2" sx={{ mb: 1 }}>
-          Checked with the default strict limits (2 s, standard pixel thresholds), so photos you selected with looser
-          sliders show as not proven. {review.rows.length.toLocaleString()} photos in the bin: {review.counts.proven.toLocaleString()} identical to a
-          kept photo
-          {review.counts.unproven > 0 && `, ${review.counts.unproven.toLocaleString()} not proven`}
-          {review.counts["no-keeper"] > 0 && `, ${review.counts["no-keeper"].toLocaleString()} with no copy kept`}
+          Every photo going to the trash is compared with the photos of its group that stay. It counts as covered when
+          one of them looks the same and has about the same resolution.{" "}
+          {review.rows.length.toLocaleString()} in the bin: {review.counts.matched.toLocaleString()} covered
+          {review.counts["no-match"] > 0 && `, ${review.counts["no-match"].toLocaleString()} with no close match`}
+          {review.counts["no-keeper"] > 0 && `, ${review.counts["no-keeper"].toLocaleString()} with no copy staying`}
           {review.counts.conflict > 0 && `, ${review.counts.conflict.toLocaleString()} kept by another group (blocked)`}.
-          {!scan && !error && " Checking pixels…"}
         </Typography>
-        <ToggleButtonGroup size="small" exclusive value={filter} onChange={(_, v) => v && setFilter(v)} sx={{ mb: 1 }}>
+        <Typography variant="caption" component="div">Close match = at least {pct(minSimilarity)} similar</Typography>
+        <Slider size="small" min={0.9} max={1} step={0.005} value={minSimilarity}
+          onChange={(_, v) => setMinSimilarity(v as number)} />
+        <Typography variant="caption" component="div">Resolution within {pct(maxResDiff, 0)} of each other</Typography>
+        <Slider size="small" min={0} max={0.2} step={0.01} value={maxResDiff}
+          onChange={(_, v) => setMaxResDiff(v as number)} />
+        <ToggleButtonGroup size="small" exclusive value={filter} onChange={(_, v) => v && setFilter(v)} sx={{ my: 1 }}>
           <ToggleButton value="problems">Candidates to restore</ToggleButton>
           <ToggleButton value="all">All</ToggleButton>
         </ToggleButtonGroup>
         {shown.slice(0, MAX_ROWS).map((r) => {
-          const item = mediaItems[r.key]
-          const keeper = r.keeperKey ? mediaItems[r.keeperKey] : undefined
           const l = LABEL[r.status]
           return (
-            <Box key={`${r.groupId}:${r.key}`} sx={{ display: "flex", alignItems: "center", gap: 1, py: 0.5 }}>
-              <Thumb item={item} />
-              <Typography variant="caption">→ kept</Typography>
-              {keeper ? <Thumb item={keeper} /> : <Box sx={{ width: 80 }} />}
-              <Chip size="small" color={l.color} label={l.text} />
-              {(
-                <Button size="small" onClick={() => onKeepOnly(binKeys.filter((k) => k !== r.key))}>
-                  Keep this one
-                </Button>
-              )}
-              {r.score && (
-                <Typography variant="caption" color="text.secondary">
-                  bits {r.score.hamming} · colour {r.score.colorMae.toFixed(1)} · local {r.score.cellDiff}
-                </Typography>
-              )}
+            <Box key={`${r.groupId}:${r.key}`} sx={{ display: "flex", alignItems: "center", gap: 1.5, py: 1, borderTop: 1, borderColor: "divider" }}>
+              <Side item={mediaItems[r.key]} role="trash" />
+              <Typography>→</Typography>
+              <Side item={r.keeperKey ? mediaItems[r.keeperKey] : undefined} role="stay" />
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, alignItems: "flex-start" }}>
+                <Chip size="small" color={l.color} label={l.text} />
+                {r.similarity !== undefined && (
+                  <Typography variant="caption" color="text.secondary">
+                    {pct(r.similarity)} similar
+                    {r.resDiff !== undefined && ` · resolution ${pct(r.resDiff)} apart`}
+                    {r.resDiff === undefined && " · resolution unknown"}
+                  </Typography>
+                )}
+                {r.status !== "conflict" && (
+                  <Button size="small" onClick={() => onKeepOnly(binKeys.filter((k) => k !== r.key))}>
+                    Keep this one (don't trash)
+                  </Button>
+                )}
+              </Box>
             </Box>
           )
         })}
         {shown.length > MAX_ROWS && (
           <Typography variant="caption">Showing {MAX_ROWS} of {shown.length.toLocaleString()}.</Typography>
         )}
-        {shown.length === 0 && scan && <Typography variant="body2">Nothing needs a look.</Typography>}
+        {shown.length === 0 && !loading && <Typography variant="body2">Nothing needs a look.</Typography>}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Close</Button>
         <Button
-          disabled={!scan || provenKeys.length === 0 || provenKeys.length === review.rows.length}
-          onClick={() => { onKeepOnly(provenKeys); onClose() }}>
-          Restore the {(review.rows.length - provenKeys.length).toLocaleString()} not proven (trash only the {provenKeys.length.toLocaleString()} identical)
+          disabled={loading || matchedKeys.length === 0 || matchedKeys.length === review.rows.length}
+          onClick={() => { onKeepOnly(matchedKeys); onClose() }}>
+          Keep the {(review.rows.length - matchedKeys.length).toLocaleString()} without a close match (trash only the {matchedKeys.length.toLocaleString()} covered)
         </Button>
       </DialogActions>
     </Dialog>

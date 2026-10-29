@@ -979,7 +979,7 @@ export default function App() {
   const binConflicts = useMemo(
     () =>
       state.status === "results"
-        ? reviewTrash(binGroups, state.mediaItems, getKept, binSet, null, DEFAULT_PIXEL_THRESHOLDS).counts.conflict
+        ? reviewTrash(binGroups, state.mediaItems, getKept, binSet, null).counts.conflict
         : 0,
     [binGroups, binSet, state, getKept]
   )
