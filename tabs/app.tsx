@@ -965,10 +965,10 @@ export default function App() {
   // The bin always reflects the current selection, so it can be reviewed before "Move to Trash".
   const liveBatch = useMemo(
     () =>
-      state.status === "results"
+      state.status === "results" && (reviewBinOpen || trashConfirm)
         ? buildTrashBatch(state.groups, state.mediaItems, trashableIds, getKept, reviewedIds)
         : null,
-    [state, trashableIds, getKept, reviewedIds]
+    [state, trashableIds, getKept, reviewedIds, reviewBinOpen, trashConfirm]
   )
   const binSet = useMemo(() => new Set(liveBatch?.mediaKeysToTrash ?? []), [liveBatch])
   const binGroups = useMemo(

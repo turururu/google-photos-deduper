@@ -87,7 +87,16 @@ describe("incremental scan support", () => {
       { before: { a: ["p", "q", "gone", "r"] }, after: { a: ["p", "q", "r", "n"] } },
     )
     expect([...r.keptOverrides.a].sort()).toEqual(["n", "p", "q"])
-    expect(r.selected.has("a")).toBe(true)
+    expect(r.selected.has("a")).toBe(true) // it was checked before
+    expect(r.reviewed.has("a")).toBe(false)
+  })
+  it("a changed group the user unchecked stays unchecked and unreviewed", () => {
+    const r = carryOverSelection(
+      { selectedGroupIds: [], keptOverrides: {} },
+      ["a"], ["a"], ["a"], [],
+      { before: { a: ["p", "q"] }, after: { a: ["p", "q", "n"] } },
+    )
+    expect(r.selected.has("a")).toBe(false)
     expect(r.reviewed.has("a")).toBe(false)
   })
   it("drops the override when every kept photo left the group", () => {

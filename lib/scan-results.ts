@@ -56,10 +56,11 @@ export function carryOverSelection(
   const changed = new Set(changedIds);
   const reset = new Set([...changedIds, ...newIds]);
   const keep = (id: string) => valid.has(id) && !reset.has(id);
+  // A changed group keeps its checked state (unchecked means "keep all"); only new groups start checked.
   const selected = saved
-    ? new Set(saved.selectedGroupIds.filter(keep))
-    : new Set(groupIds.filter((id) => !reset.has(id)));
-  for (const id of reset) if (valid.has(id)) selected.add(id);
+    ? new Set(saved.selectedGroupIds.filter((id) => valid.has(id) && !newIds.includes(id)))
+    : new Set(groupIds);
+  for (const id of newIds) if (valid.has(id)) selected.add(id);
   const keptOverrides: Record<string, Set<string>> = {};
   for (const [id, keys] of Object.entries(saved?.keptOverrides ?? {})) {
     if (keep(id)) {
