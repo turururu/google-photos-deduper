@@ -11,7 +11,7 @@ export interface GroupPlan {
   fully: boolean; // everything but one photo is trashed
 }
 
-const passes = (s: PairScore, t: PixelThresholds) =>
+export const passes = (s: PairScore, t: PixelThresholds) =>
   s.hamming <= t.maxHamming && s.colorMae <= t.maxColorMae && s.cellDiff <= t.maxCellDiff;
 
 /**

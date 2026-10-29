@@ -22,6 +22,8 @@ interface Props {
   groups: DuplicateGroup[]
   mediaItems: Record<string, GpdMediaItem>
   keptOf: (g: DuplicateGroup) => Set<string>
+  /** mediaKeys currently in the bin. */
+  trashSet: Set<string>
   onClose: () => void
   /** Shrink the bin to exactly these photos. */
   onKeepOnly: (mediaKeys: string[]) => void
@@ -36,7 +38,7 @@ const LABEL: Record<ReviewStatus, { text: string; color: "success" | "warning" |
 
 const MAX_ROWS = 200
 
-export function TrashReviewDialog({ open, groups, mediaItems, keptOf, onClose, onKeepOnly }: Props) {
+export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, onClose, onKeepOnly }: Props) {
   const [scan, setScan] = useState<IdenticalScan | null>(null)
   const [progress, setProgress] = useState<[number, number] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -63,8 +65,8 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, onClose, o
   }, [open])
 
   const review = useMemo(
-    () => reviewTrash(groups, mediaItems, keptOf, scan, DEFAULT_PIXEL_THRESHOLDS),
-    [groups, mediaItems, keptOf, scan]
+    () => reviewTrash(groups, mediaItems, keptOf, trashSet, scan, DEFAULT_PIXEL_THRESHOLDS),
+    [groups, mediaItems, keptOf, trashSet, scan]
   )
   const shown = review.rows.filter((r) => filter === "all" || r.status !== "proven")
   const provenKeys = review.rows.filter((r) => r.status === "proven").map((r) => r.key)
@@ -76,7 +78,8 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, onClose, o
         {progress && <LinearProgress sx={{ mb: 1 }} />}
         {error && <Typography color="error" variant="body2">Check failed: {error}</Typography>}
         <Typography variant="body2" sx={{ mb: 1 }}>
-          {review.rows.length.toLocaleString()} photos in the bin: {review.counts.proven.toLocaleString()} identical to a
+          Checked with the default strict limits (2 s, standard pixel thresholds), so photos you selected with looser
+          sliders show as not proven. {review.rows.length.toLocaleString()} photos in the bin: {review.counts.proven.toLocaleString()} identical to a
           kept photo
           {review.counts.unproven > 0 && `, ${review.counts.unproven.toLocaleString()} not proven`}
           {review.counts["no-keeper"] > 0 && `, ${review.counts["no-keeper"].toLocaleString()} with no copy kept`}

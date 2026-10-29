@@ -1,3 +1,4 @@
+import { passes } from "./identical-plan";
 import { pairKey, type IdenticalScan, type PairScore } from "./identical-scan";
 import { pairMetadataOk } from "./near-exact";
 import type { PixelThresholds } from "./pixel-hash";
@@ -22,18 +23,17 @@ export interface TrashReview {
   counts: Record<ReviewStatus, number>;
 }
 
-const passes = (s: PairScore, t: PixelThresholds) =>
-  s.hamming <= t.maxHamming && s.colorMae <= t.maxColorMae && s.cellDiff <= t.maxCellDiff;
-
 /**
- * For every photo about to be trashed, find the photo that stays and say whether
- * it is proven identical to it. `scan` may be null (then nothing is proven).
- * A photo that is kept by ANY marked group is a conflict and must not be trashed.
+ * For every photo in `trashSet`, find a photo of its group that is NOT in the
+ * bin and say whether it is proven identical to it (any such keeper may prove
+ * it, as in the planner). `scan` may be null (then nothing is proven).
+ * A trashed photo that a marked group keeps is a conflict.
  */
 export function reviewTrash(
   groups: DuplicateGroup[],
   items: Record<string, GpdMediaItem>,
   keptOf: (g: DuplicateGroup) => Set<string>,
+  trashSet: Set<string>,
   scan: IdenticalScan | null,
   thresholds: PixelThresholds,
 ): TrashReview {
@@ -42,11 +42,10 @@ export function reviewTrash(
 
   const rows: ReviewRow[] = [];
   for (const g of groups) {
-    const kept = keptOf(g);
-    const keepers = g.mediaKeys.filter((k) => kept.has(k) && items[k]);
+    const keepers = g.mediaKeys.filter((k) => !trashSet.has(k) && items[k]);
     const byPair = new Map((scan?.pairs[g.id] ?? []).map((s) => [pairKey(s.a, s.b), s]));
     for (const key of g.mediaKeys) {
-      if (kept.has(key) || !items[key]) continue;
+      if (!trashSet.has(key) || !items[key]) continue;
       if (keptAnywhere.has(key)) {
         rows.push({ groupId: g.id, key, keeperKey: null, status: "conflict" });
         continue;
@@ -55,26 +54,19 @@ export function reviewTrash(
         rows.push({ groupId: g.id, key, keeperKey: null, status: "no-keeper" });
         continue;
       }
-      // Closest keeper by worst local difference; unscored ones last.
-      let best: { keeper: string; score?: PairScore } | null = null;
+      // Prefer a keeper that proves it (smallest local diff); else show the closest.
+      let proof: { keeper: string; score: PairScore } | null = null;
+      let closest: { keeper: string; score?: PairScore } | null = null;
       for (const k of keepers) {
         const score = byPair.get(pairKey(key, k));
-        const better =
-          !best ||
-          (score !== undefined && (best.score === undefined || score.cellDiff < best.score.cellDiff));
-        if (better) best = { keeper: k, score };
+        if (score && passes(score, thresholds) && pairMetadataOk(items[key], items[k])) {
+          if (!proof || score.cellDiff < proof.score.cellDiff) proof = { keeper: k, score };
+        }
+        if (!closest || (score !== undefined && (closest.score === undefined || score.cellDiff < closest.score.cellDiff)))
+          closest = { keeper: k, score };
       }
-      const proven =
-        best!.score !== undefined &&
-        passes(best!.score, thresholds) &&
-        pairMetadataOk(items[key], items[best!.keeper]);
-      rows.push({
-        groupId: g.id,
-        key,
-        keeperKey: best!.keeper,
-        status: proven ? "proven" : "unproven",
-        score: best!.score,
-      });
+      const pick = proof ?? closest!;
+      rows.push({ groupId: g.id, key, keeperKey: pick.keeper, status: proof ? "proven" : "unproven", score: pick.score });
     }
   }
   const counts: Record<ReviewStatus, number> = { proven: 0, unproven: 0, "no-keeper": 0, conflict: 0 };

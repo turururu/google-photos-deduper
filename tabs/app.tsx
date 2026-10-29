@@ -926,18 +926,18 @@ export default function App() {
   }, [state, trashableIds, reviewedIds, getKept])
 
   const [reviewBinOpen, setReviewBinOpen] = useState(false)
-  const binGroups = useMemo(() => {
-    if (!trashConfirm || state.status !== "results") return []
-    const trashSet = new Set(trashConfirm.mediaKeysToTrash)
-    return state.groups.filter((g) => g.mediaKeys.some((k) => trashSet.has(k)))
-  }, [trashConfirm, state])
+  const binSet = useMemo(() => new Set(trashConfirm?.mediaKeysToTrash ?? []), [trashConfirm])
+  const binGroups = useMemo(
+    () => (state.status === "results" ? state.groups.filter((g) => g.mediaKeys.some((k) => binSet.has(k))) : []),
+    [binSet, state]
+  )
   // Photos the bin would trash that another marked group keeps: never allowed.
   const binConflicts = useMemo(
     () =>
       state.status === "results"
-        ? reviewTrash(binGroups, state.mediaItems, getKept, null, DEFAULT_PIXEL_THRESHOLDS).counts.conflict
+        ? reviewTrash(binGroups, state.mediaItems, getKept, binSet, null, DEFAULT_PIXEL_THRESHOLDS).counts.conflict
         : 0,
-    [binGroups, state, getKept]
+    [binGroups, binSet, state, getKept]
   )
   const handleBinKeepOnly = useCallback((keys: string[]) => {
     const keep = new Set(keys)
@@ -949,9 +949,13 @@ export default function App() {
         dedupKeys: idx.map((i) => c.dedupKeys[i]),
         mediaKeysToTrash: idx.map((i) => c.mediaKeysToTrash[i]),
         fullyTrashedGroups: 0, // proven photos always have a kept copy
+        unreviewedGroups:
+          state.status === "results"
+            ? state.groups.filter((g) => !reviewedIds.has(g.id) && g.mediaKeys.some((k) => keep.has(k))).length
+            : c.unreviewedGroups,
       }
     })
-  }, [])
+  }, [state, reviewedIds])
 
   const [backupProgress, setBackupProgress] = useState<[number, number] | null>(null)
   const handleDownloadBackup = useCallback(async () => {
@@ -1462,7 +1466,7 @@ export default function App() {
               Cancel recording
             </Button>
           )}
-          <Button onClick={() => setReviewBinOpen(true)}>Review bin</Button>
+          <Button onClick={() => setReviewBinOpen(true)} disabled={videoProgress !== null}>Review bin</Button>
           <Button onClick={handleDownloadVideo} disabled={videoProgress !== null}>
             {videoProgress
               ? `Recording ${videoProgress[0]}/${videoProgress[1]}…`
@@ -1489,6 +1493,7 @@ export default function App() {
           groups={binGroups}
           mediaItems={state.mediaItems}
           keptOf={getKept}
+          trashSet={binSet}
           onClose={() => setReviewBinOpen(false)}
           onKeepOnly={handleBinKeepOnly}
         />

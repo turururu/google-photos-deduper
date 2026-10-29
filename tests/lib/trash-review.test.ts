@@ -14,19 +14,38 @@ describe("reviewTrash", () => {
   const keep = (s: string[]) => () => new Set(s)
 
   it("proves a trashed photo against its keeper", () => {
-    const r = reviewTrash([g], it_, keep(["a"]), scanOf("g", "a", "b", 3), T)
+    const r = reviewTrash([g], it_, keep(["a"]), new Set(["b"]), scanOf("g", "a", "b", 3), T)
     expect(r.rows).toEqual([expect.objectContaining({ key: "b", keeperKey: "a", status: "proven" })])
   })
   it("is unproven when the pair fails or was not scanned", () => {
-    expect(reviewTrash([g], it_, keep(["a"]), scanOf("g", "a", "b", 90), T).counts.unproven).toBe(1)
-    expect(reviewTrash([g], it_, keep(["a"]), null, T).counts.unproven).toBe(1)
+    expect(reviewTrash([g], it_, keep(["a"]), new Set(["b"]), scanOf("g", "a", "b", 90), T).counts.unproven).toBe(1)
+    expect(reviewTrash([g], it_, keep(["a"]), new Set(["b"]), null, T).counts.unproven).toBe(1)
   })
   it("flags a group with no survivor", () => {
-    expect(reviewTrash([g], it_, keep([]), null, T).counts["no-keeper"]).toBe(2)
+    expect(reviewTrash([g], it_, keep([]), new Set(["a", "b"]), null, T).counts["no-keeper"]).toBe(2)
   })
   it("flags a photo that another group keeps", () => {
     const g2 = grp("h", ["b", "c"])
-    const r = reviewTrash([g, g2], items(["a", "b", "c"]), (x) => new Set(x.id === "g" ? ["a"] : ["b"]), null, T)
+    const r = reviewTrash([g, g2], items(["a", "b", "c"]), (x) => new Set(x.id === "g" ? ["a"] : ["b"]), new Set(["b", "c"]), null, T)
     expect(r.rows.find((x) => x.groupId === "g")!.status).toBe("conflict")
+  })
+  it("any passing keeper proves it, not just the closest", () => {
+    const g3 = grp("g", ["a", "b", "d"])
+    const its = { ...items(["a", "b", "d"]), d: { ...mk("d"), timestamp: 1_030_000 } }
+    const scan = { groupsScanned: 1, skipped: {}, pairs: { g: [
+      { a: "b", b: "d", hamming: 0, colorMae: 0, cellDiff: 0 },
+      { a: "a", b: "b", hamming: 0, colorMae: 1, cellDiff: 9 },
+    ] } }
+    const r = reviewTrash([g3], its, keep(["a", "d"]), new Set(["b"]), scan, T)
+    expect(r.rows[0]).toEqual(expect.objectContaining({ status: "proven", keeperKey: "a" }))
+  })
+  it("rows follow the trash set: dropped photos vanish and clear conflicts", () => {
+    const g2 = grp("h", ["b", "c"])
+    const kept = (x: any) => new Set(x.id === "g" ? ["a"] : ["b"])
+    const all = items(["a", "b", "c"])
+    expect(reviewTrash([g, g2], all, kept, new Set(["b", "c"]), null, T).counts.conflict).toBeGreaterThan(0)
+    const shrunk = reviewTrash([g, g2], all, kept, new Set(["c"]), null, T)
+    expect(shrunk.rows.map((r) => r.key)).toEqual(["c"])
+    expect(shrunk.counts.conflict).toBe(0)
   })
 })
