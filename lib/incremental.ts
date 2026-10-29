@@ -22,6 +22,8 @@ export interface IncrementalResult {
  * @param newFrom      index of the first new photo in `keys`
  * @param rowClusters  one per new photo: [its own index, ...indices at or above the threshold]
  * @param nextSeq      next unused group number, so a dropped id is never reused
+ * @param present      mediaKey of every photo still in the library; members missing from
+ *                     `keys` but present here (no embedding this run) stay in their group
  */
 export function mergeIncremental(
   prevGroups: DuplicateGroup[],
@@ -29,6 +31,7 @@ export function mergeIncremental(
   newFrom: number,
   rowClusters: number[][],
   nextSeq: number,
+  present: Set<string> = new Set(keys),
 ): IncrementalResult {
   const indexOf = new Map(keys.map((k, i) => [k, i]));
   const groupOfIdx = new Map<number, number>(); // photo index -> position in `kept`
@@ -36,14 +39,14 @@ export function mergeIncremental(
   const droppedIds: string[] = [];
 
   for (const g of prevGroups) {
-    const members = g.mediaKeys.filter((k) => indexOf.has(k));
+    const members = g.mediaKeys.filter((k) => present.has(k));
     if (members.length < 2) {
       droppedIds.push(g.id);
       continue;
     }
     const pos = kept.length;
     kept.push({ id: g.id, mediaKeys: members, status: members.length === g.mediaKeys.length ? "unchanged" : "changed" });
-    for (const k of members) groupOfIdx.set(indexOf.get(k)!, pos);
+    for (const k of members) if (indexOf.has(k)) groupOfIdx.set(indexOf.get(k)!, pos);
   }
 
   // Phase 1: a new photo joins the old group it matches the most members of.

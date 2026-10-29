@@ -77,4 +77,25 @@ describe("incremental scan support", () => {
     expect(Object.keys(r.keptOverrides)).toEqual(["a"])
     expect([...r.reviewed]).toEqual(["a"])
   })
+  it("a changed group keeps the user's kept photos and the newcomers", () => {
+    const r = carryOverSelection(
+      { selectedGroupIds: ["a"], keptOverrides: { a: ["p", "q", "gone"] } },
+      ["a"],
+      ["a"],
+      ["a"],
+      [],
+      { before: { a: ["p", "q", "gone", "r"] }, after: { a: ["p", "q", "r", "n"] } },
+    )
+    expect([...r.keptOverrides.a].sort()).toEqual(["n", "p", "q"])
+    expect(r.selected.has("a")).toBe(true)
+    expect(r.reviewed.has("a")).toBe(false)
+  })
+  it("drops the override when every kept photo left the group", () => {
+    const r = carryOverSelection(
+      { selectedGroupIds: ["a"], keptOverrides: { a: ["gone"] } },
+      [], ["a"], ["a"], [],
+      { before: { a: ["gone", "r", "s"] }, after: { a: ["r", "s", "n"] } },
+    )
+    expect(r.keptOverrides.a).toBeUndefined()
+  })
 })

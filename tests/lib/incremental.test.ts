@@ -36,6 +36,11 @@ describe("mergeIncremental", () => {
     const r = mergeIncremental(prev, keys, FROM, [], 2)
     expect(r.groups.every((x) => x.status === "unchanged")).toBe(true)
   })
+  it("an old member without an embedding this run stays in its group", () => {
+    const left = keys.filter((k) => k !== "e")
+    const r = mergeIncremental(prev, left, left.indexOf("n1"), [], 2, new Set(keys))
+    expect(r.groups.find((x) => x.id === "group-1")).toMatchObject({ status: "unchanged", mediaKeys: ["c", "d", "e"] })
+  })
   it("a photo that lost a member is marked changed", () => {
     const left = keys.filter((k) => k !== "e")
     const r = mergeIncremental(prev, left, left.indexOf("n1"), [], 2)

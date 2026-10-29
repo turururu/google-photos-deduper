@@ -49,8 +49,11 @@ export function carryOverSelection(
   groupIds: string[],
   changedIds: string[],
   newIds: string[],
+  /** members before and after the update, by group id (needed for changed groups) */
+  members: { before: Record<string, string[]>; after: Record<string, string[]> } = { before: {}, after: {} },
 ): { selected: Set<string>; keptOverrides: Record<string, Set<string>>; reviewed: Set<string> } {
   const valid = new Set(groupIds);
+  const changed = new Set(changedIds);
   const reset = new Set([...changedIds, ...newIds]);
   const keep = (id: string) => valid.has(id) && !reset.has(id);
   const selected = saved
@@ -58,6 +61,19 @@ export function carryOverSelection(
     : new Set(groupIds.filter((id) => !reset.has(id)));
   for (const id of reset) if (valid.has(id)) selected.add(id);
   const keptOverrides: Record<string, Set<string>> = {};
-  for (const [id, keys] of Object.entries(saved?.keptOverrides ?? {})) if (keep(id)) keptOverrides[id] = new Set(keys);
+  for (const [id, keys] of Object.entries(saved?.keptOverrides ?? {})) {
+    if (keep(id)) {
+      keptOverrides[id] = new Set(keys);
+    } else if (changed.has(id) && valid.has(id)) {
+      // Whatever the user kept stays kept; photos that joined stay until reviewed.
+      const after = new Set(members.after[id] ?? []);
+      const before = new Set(members.before[id] ?? []);
+      const next = new Set(keys.filter((k) => after.has(k)));
+      if (next.size > 0) {
+        for (const k of after) if (!before.has(k)) next.add(k);
+        keptOverrides[id] = next;
+      }
+    }
+  }
   return { selected, keptOverrides, reviewed: new Set((reviewed ?? []).filter(keep)) };
 }

@@ -370,19 +370,29 @@ export async function fullDetectDuplicates(
       newPos.length > 0
         ? await runCommunityDetectionInWorker(ordered, threshold, [], workerUrl, trackedProgress, signal, [oldPos.length, ordered.length], true)
         : [];
-    const merged = mergeIncremental(incremental.groups, keys, oldPos.length, clusters, incremental.nextSeq);
+    const merged = mergeIncremental(
+      incremental.groups,
+      keys,
+      oldPos.length,
+      clusters,
+      incremental.nextSeq,
+      new Set(mediaItems.map((m) => m.mediaKey)),
+    );
+    const itemByKey = new Map(mediaItems.map((m) => [m.mediaKey, m]));
     const oldById = new Map(incremental.groups.map((g) => [g.id, g]));
     const byKey = new Map(order.map((p, i) => [validKeys[p], { item: candidates[validIndices[p]], emb: ordered[i] }]));
     const groups: DuplicateGroup[] = merged.groups.map((d) => {
       if (d.status === "unchanged") return oldById.get(d.id)!;
       const items = d.mediaKeys
-        .map((k) => byKey.get(k)!.item)
+        .map((k) => byKey.get(k)?.item ?? itemByKey.get(k)!)
         .sort((a, b) => (a.creationTimestamp ?? 0) - (b.creationTimestamp ?? 0));
+      const embs = d.mediaKeys.flatMap((k) => byKey.get(k)?.emb ?? []);
+      const prevGroup = oldById.get(d.id);
       return {
         id: d.id,
         mediaKeys: items.map((i) => i.mediaKey),
         originalMediaKey: selectDefaultKeep(items),
-        similarity: meanPairwiseSimilarity(d.mediaKeys.map((k) => byKey.get(k)!.emb), threshold),
+        similarity: embs.length >= 2 ? meanPairwiseSimilarity(embs, threshold) : (prevGroup?.similarity ?? threshold),
       };
     });
     const communityDetectionMs = Math.round(performance.now() - t3);

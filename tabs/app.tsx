@@ -575,7 +575,11 @@ export default function App() {
             inc.reviewed,
             groups.map((g) => g.id),
             delta.changedIds,
-            delta.newIds
+            delta.newIds,
+            {
+              before: Object.fromEntries(inc.prev.groups.map((g) => [g.id, g.mediaKeys])),
+              after: Object.fromEntries(groups.map((g) => [g.id, g.mediaKeys]))
+            }
           )
           pendingSelectionsRef.current = {
             selectedGroupIds: carried.selected,
@@ -927,7 +931,8 @@ export default function App() {
               nextSeq: stored.scanMeta!.nextSeq
             },
             selections: stored.selections,
-            reviewed: stored.reviewed?.ids
+            reviewed:
+              stored.reviewed?.scanDate === prev.scanDate ? stored.reviewed?.ids : undefined
           }
         }
       }
