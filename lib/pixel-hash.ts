@@ -121,3 +121,14 @@ export function allPairsIdentical(
   }
   return true;
 }
+
+/** Flat images (placeholders, blank/black frames) all look alike; never treat them as comparable. */
+export function isFlat(fp: Fingerprint, minStdDev = 4): boolean {
+  const g = fp.gray;
+  let sum = 0;
+  for (const v of g) sum += v;
+  const mean = sum / g.length;
+  let sq = 0;
+  for (const v of g) sq += (v - mean) ** 2;
+  return Math.sqrt(sq / g.length) < minStdDev;
+}

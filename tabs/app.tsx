@@ -243,6 +243,8 @@ export default function App() {
   const [safeSelectOpen, setSafeSelectOpen] = useState(false)
   const [viewPrefs, setViewPrefs] = useState<ViewPrefs>(DEFAULT_VIEW_PREFS)
   // Selection the "marked only" filter judges against (see ViewPrefs.selection).
+  // Session-only: what Select identical decided per group, to tell partial marks from whole-group ones.
+  const [identicalNotes, setIdenticalNotes] = useState<Record<string, string>>({})
   const [selSnapshot, setSelSnapshot] = useState<Set<string>>(new Set())
   const selectedRef = useRef<Set<string>>(selectedGroupIds)
   selectedRef.current = selectedGroupIds
@@ -1283,6 +1285,12 @@ export default function App() {
                 const r = applyPlans(selectedGroupIds, keptOverrides, plans)
                 setSelectedGroupIds(r.selected)
                 setKeptOverrides(r.kept)
+                setIdenticalNotes((prev) => ({
+                  ...prev,
+                  ...Object.fromEntries(
+                    plans.map((p) => [p.groupId, `identical: ${p.trash.length} trashed, ${p.kept.length} kept`])
+                  ),
+                }))
               }}
             />
             <TrashRestoreDialog
@@ -1339,6 +1347,7 @@ export default function App() {
               onToggleKept={handleToggleKept}
               onTrashWholeGroup={handleTrashWholeGroup}
               reviewedIds={reviewedIds}
+              identicalNotes={identicalNotes}
               onToggleReviewed={handleToggleReviewed}
               bucketsSplit={state.bucketsSplit}
             />}

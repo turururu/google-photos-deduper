@@ -83,6 +83,8 @@ export function pairMetadataOk(
   opts: NearExactOptions = DEFAULT_NEAR_EXACT,
 ): boolean {
   if (a.duration !== undefined || b.duration !== undefined) return false;
+  // Missing times must fail: NaN would slip past a `>` comparison.
+  if (!Number.isFinite(a.timestamp) || !Number.isFinite(b.timestamp)) return false;
   if (Math.abs(a.timestamp - b.timestamp) > opts.maxTakenDiffMs) return false;
   if (!a.resWidth || !a.resHeight || !b.resWidth || !b.resHeight) return false;
   const ra = a.resWidth / a.resHeight;

@@ -5,6 +5,7 @@ import {
   colorMae,
   computeFingerprint,
   hamming,
+  isFlat,
   maxCellDiff,
   type Fingerprint,
   type PixelThresholds,
@@ -41,7 +42,8 @@ async function fingerprintFor(
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(bitmap, 0, 0);
       const { data, width, height } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-      fp = computeFingerprint(data, width, height);
+      const f = computeFingerprint(data, width, height);
+      fp = isFlat(f) ? null : f; // flat images match anything: leave them uncompared
       bitmap.close();
     } else {
       res.body?.cancel();

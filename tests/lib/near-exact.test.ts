@@ -53,3 +53,11 @@ describe("nearExactExclusions", () => {
     expect(nearExactExclusions(same, 0.999)).toEqual([])
   })
 })
+
+import { pairMetadataOk } from "../../lib/near-exact"
+describe("pairMetadataOk", () => {
+  it("passes identical metadata but fails when a taken time is missing", () => {
+    expect(pairMetadataOk(item(), item())).toBe(true)
+    expect(pairMetadataOk(item({ timestamp: undefined as any }), item())).toBe(false)
+  })
+})

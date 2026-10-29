@@ -156,6 +156,7 @@ interface DuplicateGroupRowProps {
   onMouseLeavePhoto: () => void
   isFocused: boolean
   isReviewed: boolean
+  identicalNote?: string
 }
 
 const DuplicateGroupRow = memo(function DuplicateGroupRow({
@@ -171,6 +172,7 @@ const DuplicateGroupRow = memo(function DuplicateGroupRow({
   onMouseLeavePhoto,
   isFocused,
   isReviewed,
+  identicalNote,
 }: DuplicateGroupRowProps) {
   const allTrashed = isWholeGroupTrashed(keptSet)
   const rowRef = useRef<HTMLDivElement>(null)
@@ -200,6 +202,9 @@ const DuplicateGroupRow = memo(function DuplicateGroupRow({
         <Typography variant="subtitle2" sx={{ flex: 1 }}>
           {group.mediaKeys.length} {groupItemKind(group, mediaItems)}
         </Typography>
+        {identicalNote && isSelected && (
+          <Chip label={identicalNote} size="small" color="info" variant="outlined" sx={{ mr: 1 }} />
+        )}
         {isReviewed && (
           <Chip label="reviewed" size="small" color="success" variant="outlined" sx={{ mr: 1 }} />
         )}
@@ -363,6 +368,7 @@ interface DuplicateGroupsProps {
   onToggleKept: (group: DuplicateGroup, mediaKey: string) => void
   onTrashWholeGroup: (group: DuplicateGroup) => void
   reviewedIds?: Set<string>
+  identicalNotes?: Record<string, string>
   onToggleReviewed?: (groupId: string, value?: boolean) => void
   /**
    * Timestamp buckets split during the scan to keep pairwise comparison
@@ -380,6 +386,7 @@ export function DuplicateGroups({
   onToggleKept,
   onTrashWholeGroup,
   reviewedIds = EMPTY_SET,
+  identicalNotes,
   onToggleReviewed = noopToggleReviewed,
   bucketsSplit = 0,
 }: DuplicateGroupsProps) {
@@ -573,6 +580,7 @@ export function DuplicateGroups({
           onMouseLeavePhoto={onMouseLeavePhoto}
           isFocused={rowIndex === focusedIndex}
           isReviewed={reviewedIds.has(group.id)}
+          identicalNote={identicalNotes?.[group.id]}
         />
       ))}
 

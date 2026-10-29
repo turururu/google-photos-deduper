@@ -40,3 +40,12 @@ describe("pixel-hash", () => {
     expect(allPairsIdentical([make(gradient), patched])).toBe(false)
   })
 })
+
+import { isFlat } from "../../lib/pixel-hash"
+describe("isFlat", () => {
+  const fp = (g: Uint8Array) => ({ dhash: new Uint8Array(8), color: new Uint8Array(192), gray: g })
+  it("flags uniform images only", () => {
+    expect(isFlat(fp(new Uint8Array(1024).fill(10)))).toBe(true)
+    expect(isFlat(fp(Uint8Array.from({ length: 1024 }, (_, i) => (i % 2 ? 0 : 200))))).toBe(false)
+  })
+})
