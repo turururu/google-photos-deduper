@@ -115,7 +115,8 @@ export function applyViewPrefs(
     // Real quota first (bytes dwarf pixel counts), pixels for groups without sizes.
     "removable-desc": (r) => {
       const f = estimatedFreed(r.items);
-      return f === null ? -removablePixels(r.items) : -(1e15 + f);
+      // groups that free space first, unknown (by pixels) next, known-free last
+      return f === null ? -removablePixels(r.items) : f > 0 ? -(1e15 + f) : 1e15;
     },
     "taken-desc": (r) => -takenOf(r.items),
     "taken-asc": (r) => takenOf(r.items),

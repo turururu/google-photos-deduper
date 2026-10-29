@@ -102,7 +102,7 @@ describe("space-aware view", () => {
   }
   const run = (p = {}) => applyViewPrefs(groups, m, { ...BASE, ...p }).map((g) => g.id)
   it("sorts by quota freed, known sizes first", () =>
-    expect(run({ sort: "removable-desc" })).toEqual(["C", "A", "B"]))
+    expect(run({ sort: "removable-desc" })).toEqual(["C", "B", "A"]))
   it("freesSpace hides groups that free nothing", () => {
     expect(run({ freesSpace: true })).not.toContain("A")
     expect(run({ freesSpace: true })).toContain("B") // unknown sizes stay visible

@@ -1000,12 +1000,13 @@ export default function App() {
       videoAbortRef.current = ctrl
       const r = await writeGroupClips(dir, clips, (d, t) => setVideoProgress([d, t]), ctrl.signal)
       const MB = (r.bytes / 1e6).toFixed(1)
-      const freedGB = summarizeTrash(
+      const sum = summarizeTrash(
         trashConfirm.mediaKeysToTrash.map((k) => state.mediaItems[k]).filter((i): i is GpdMediaItem => !!i)
-      ).bytes / 1e9
+      )
+      const freedGB = sum.bytes / 1e9
       const net = freedGB - r.bytes / 1e9
       setBackupError(
-        `${r.aborted ? "Stopped. " : ""}Saved ${r.files} of ${clips.length} dated videos (${MB} MB) to the folder. In that folder run: sh set-dates.sh (sets file dates to the originals), then drag them into photos.google.com. Uploading them uses ${MB} MB again: net saving about ${net.toFixed(2)} GB.` +
+        `${r.aborted ? "Stopped. " : ""}Saved ${r.files} of ${clips.length} dated videos (${MB} MB) to the folder. In that folder run: sh set-dates.sh (sets file dates to the originals), then drag them into photos.google.com. Uploading them uses ${MB} MB again: net saving about ${net.toFixed(2)} GB (sizes known for ${sum.known} of ${sum.items} trashed photos).` +
           (r.dated ? "" : " This browser can't embed dates (WebM): dates may be wrong; the filename carries the taken date.") +
           (provenCount > 0 ? ` ${provenCount} identical photos were left out.` : "")
       )
@@ -1393,8 +1394,8 @@ export default function App() {
           <DialogContentText sx={{ mt: 2 }} variant="body2">
             Optional backups: a thumbnail sheet, or one small time-motion video per group, saved
             into a folder you choose and dated like the original photos (real-time recording: about 1 s per 4 photos, so filter to a batch first for large cleanups).
-            Drag the folder's files into Google Photos afterwards. Practically identical groups are
-            skipped. Recommended: trash the identical groups first (Select identical…). Keep this tab in front while recording.
+            Drag the folder's files into Google Photos afterwards. Photos practically identical to a kept photo are
+            left out. Recommended: trash the identical groups first (Select identical…). Keep this tab in front while recording.
           </DialogContentText>
           {backupError && (
             <DialogContentText sx={{ mt: 1 }} color="error">{backupError}</DialogContentText>
