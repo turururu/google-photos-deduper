@@ -1277,6 +1277,7 @@ export default function App() {
             <SafeSelectDialog
               open={safeSelectOpen}
               groups={shownGroups}
+              allGroups={groups}
               mediaItems={state.mediaItems}
               keepOrder={keepOrder}
               keptOverrides={keptOverrides}

@@ -35,11 +35,13 @@ function Thumb({ item }: { item: GpdMediaItem }) {
 interface Props {
   open: boolean
   groups: DuplicateGroup[]
+  /** Every group (not just the shown ones), to tell real similarity from the pre-fix fake value. */
+  allGroups: DuplicateGroup[]
   mediaItems: Record<string, GpdMediaItem>
   onClose: () => void
   keepOrder: KeepOrder
   keptOverrides: Record<string, Set<string>>
-  /** Replaces the selection with these groups and fixes each one's kept set. */
+  /** Adds these groups to the selection and fixes each one's kept set. */
   onApply: (plans: GroupPlan[]) => void
 }
 
@@ -48,19 +50,20 @@ interface Props {
  * user tune the strictness while looking at the loosest groups that would
  * pass. Selecting never trashes anything.
  */
-export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOverrides, onClose, onApply }: Props) {
+export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOverrides, allGroups, onClose, onApply }: Props) {
   const [progress, setProgress] = useState<[number, number]>([0, 0])
   const [scan, setScan] = useState<IdenticalScan | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [maxHamming, setMaxHamming] = useState(DEFAULT_PIXEL_THRESHOLDS.maxHamming)
   const [maxColorMae, setMaxColorMae] = useState(DEFAULT_PIXEL_THRESHOLDS.maxColorMae)
   const [maxCellDiff, setMaxCellDiff] = useState(DEFAULT_PIXEL_THRESHOLDS.maxCellDiff)
+  const [copyMsg, setCopyMsg] = useState<string | null>(null)
   const [includeMixed, setIncludeMixed] = useState(false)
   const [minSimilarity, setMinSimilarity] = useState(0.99)
   // Scans from before real similarity was stored give every group the same value.
   const similarityIsReal = useMemo(
-    () => new Set(groups.map((g) => g.similarity.toFixed(4))).size > 1,
-    [groups]
+    () => new Set(allGroups.map((g) => g.similarity.toFixed(4))).size > 1,
+    [allGroups]
   )
   const abortRef = useRef<AbortController | null>(null)
 
@@ -199,9 +202,26 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
       </DialogContent>
       <DialogActions>
         <Button size="small" disabled={!scan}
-          onClick={() => navigator.clipboard.writeText(JSON.stringify(
-            allPlans.slice(0, 30).map((p) => ({ ...p, similarity: groups.find((g) => g.id === p.groupId)?.similarity })), null, 1))}>
-          Copy debug data
+          onClick={() => {
+            const sim = new Map(groups.map((g) => [g.id, g.similarity]))
+            const desc = (k: string) => ({ key: k, taken: mediaItems[k]?.timestamp, file: mediaItems[k]?.fileName })
+            // lowest-similarity groups first: those are the ones worth checking
+            const data = [...allPlans]
+              .sort((x, y) => (sim.get(x.groupId) ?? 1) - (sim.get(y.groupId) ?? 1))
+              .slice(0, 30)
+              .map((p) => ({
+                groupId: p.groupId,
+                similarity: sim.get(p.groupId),
+                fully: p.fully,
+                kept: p.kept.map(desc),
+                trash: p.trash.map((t) => ({ ...desc(t.key), keptKey: t.keptKey, score: t.score })),
+              }))
+            navigator.clipboard.writeText(JSON.stringify(data, null, 1)).then(
+              () => setCopyMsg("Copied"),
+              (e) => setCopyMsg(`Copy failed: ${e}`)
+            )
+          }}>
+          {copyMsg ?? "Copy debug data"}
         </Button>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="contained" disabled={!scan || plans.length === 0}
