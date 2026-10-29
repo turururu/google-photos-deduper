@@ -28,7 +28,8 @@ import type { AppAction, AppState } from "../lib/app-reducer"
 import { debug } from "../lib/debug"
 import {
   fullDetectDuplicates,
-  smartDetectDuplicates
+  smartDetectDuplicates,
+  type IncrementalDelta
 } from "../lib/duplicate-detector"
 import type { DetectionProgress } from "../lib/duplicate-detector"
 import { ViewControls } from "../components/ViewControls"
@@ -49,7 +50,7 @@ import { selectDefaultKeep, type KeepOrder } from "../lib/duplicate-detector"
 import { ScanLogger } from "../lib/scan-log"
 import theme from "../lib/theme"
 import { APP_ID, DEFAULT_SETTINGS } from "../lib/types"
-import { areScanResultsValid } from "../lib/scan-results"
+import { areScanResultsValid, canResumeScan, carryOverSelection, scanMetaFor } from "../lib/scan-results"
 import {
   countFullyTrashedGroups,
   toggleWholeGroupTrashed
@@ -193,6 +194,13 @@ export default function App() {
       })
     }, FETCH_WATCHDOG_MS)
   }, [clearFetchWatchdog])
+
+  // Set at scan start when the saved scan can be extended with only the new photos.
+  const incrementalRef = useRef<{
+    prev: { groups: DuplicateGroup[]; knownKeys: Set<string>; nextSeq: number }
+    selections?: StoredState["selections"]
+    reviewed?: string[]
+  } | null>(null)
 
   // Counts failed healthCheck attempts during initial connect so we can retry
   // silently before showing a disconnected error.
@@ -525,7 +533,7 @@ export default function App() {
 
         // Smart mode reports how many timestamp buckets it had to split to
         // keep pairwise comparison bounded; full mode never splits.
-        const { groups, bucketsSplit } =
+        const { groups, bucketsSplit, delta }: { groups: DuplicateGroup[]; bucketsSplit: number; delta?: IncrementalDelta } =
           settingsRef.current.scanMode === "smart"
             ? await smartDetectDuplicates(
                 items,
@@ -541,9 +549,10 @@ export default function App() {
                   settingsRef.current.similarityThreshold,
                   onProgressCallback,
                   signal,
-                  logger
+                  logger,
+                  incrementalRef.current?.prev
                 )
-                return { groups: result.groups, bucketsSplit: 0 }
+                return { groups: result.groups, bucketsSplit: 0, delta: result.delta }
               })()
 
         await logger.finalize("complete", { groupsFound: groups.length })
@@ -554,7 +563,31 @@ export default function App() {
           mediaItemMap[item.mediaKey] = item
         }
 
-        setReviewedIds(new Set()) // positional group ids: marks from a previous scan are meaningless
+        const inc = incrementalRef.current
+        incrementalRef.current = null
+        chrome.storage.local.set({
+          scanMeta: scanMetaFor(settingsRef.current, delta?.nextSeq ?? groups.length)
+        })
+        if (delta && inc) {
+          // Old groups kept their ids, so their marks still apply; changed/new ones start fresh.
+          const carried = carryOverSelection(
+            inc.selections,
+            inc.reviewed,
+            groups.map((g) => g.id),
+            delta.changedIds,
+            delta.newIds
+          )
+          pendingSelectionsRef.current = {
+            selectedGroupIds: carried.selected,
+            keptOverrides: carried.keptOverrides
+          }
+          setReviewedIds(carried.reviewed)
+          console.log(
+            `[GPD] incremental: ${delta.newIds.length} new, ${delta.changedIds.length} changed, ${delta.droppedIds.length} dropped groups`
+          )
+        } else {
+          setReviewedIds(new Set()) // positional group ids: marks from a previous scan are meaningless
+        }
         dispatch({
           type: "SCAN_COMPLETE",
           mediaItems: mediaItemMap,
@@ -834,7 +867,7 @@ export default function App() {
     chrome.storage.local.set({ settings })
   }, [settings])
 
-  const handleStartScan = useCallback(async () => {
+  const handleStartScan = useCallback(async (opts?: { full?: boolean }) => {
     // Cancel any in-progress scan
     scanAbortRef.current?.abort()
     scanAbortRef.current = new AbortController()
@@ -858,13 +891,19 @@ export default function App() {
     // Load cached media items for incremental fetch. On a repeat scan we only
     // fetch items newer than the most-recently-seen upload timestamp.
     cachedMediaItemsRef.current = null
+    incrementalRef.current = null
     let sinceTimestamp: number | undefined
     try {
-      const stored = (await chrome.storage.local.get(
-        "scanResults"
-      )) as Partial<StoredState>
+      const stored = (await chrome.storage.local.get([
+        "scanResults",
+        "scanMeta",
+        "selections",
+        "reviewed"
+      ])) as Partial<StoredState>
       const prev = stored.scanResults
+      // "Full rescan" ignores everything saved: relist the library and compare every photo.
       if (
+        !opts?.full &&
         prev?.mediaItems &&
         Object.keys(prev.mediaItems).length > 0 &&
         areScanResultsValid(prev, { accountEmail })
@@ -880,6 +919,17 @@ export default function App() {
         console.log(
           `[GPD] media items cache: ${Object.keys(prev.mediaItems).length} items, fetching since ${new Date(sinceTimestamp).toISOString()}`
         )
+        if (prev.groups?.length && canResumeScan(stored.scanMeta, settingsRef.current)) {
+          incrementalRef.current = {
+            prev: {
+              groups: prev.groups,
+              knownKeys: new Set(Object.keys(prev.mediaItems)),
+              nextSeq: stored.scanMeta!.nextSeq
+            },
+            selections: stored.selections,
+            reviewed: stored.reviewed?.ids
+          }
+        }
       }
     } catch {
       // Cache unavailable — do full fetch

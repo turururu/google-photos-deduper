@@ -120,7 +120,7 @@ self.addEventListener("message", async (event: MessageEvent) => {
   }
 
   if (type === "detectBlock") {
-    const { flatEmbeddings, n, dim, threshold, start, end, id } = data as {
+    const { flatEmbeddings, n, dim, threshold, start, end, id, seedFirst } = data as {
       flatEmbeddings?: Float32Array;
       n: number;
       dim: number;
@@ -128,12 +128,14 @@ self.addEventListener("message", async (event: MessageEvent) => {
       start: number;
       end: number;
       id: number;
+      seedFirst?: boolean;
     };
     // The embeddings are sent once (first block); later blocks reuse them.
     if (flatEmbeddings) blockEmbeddings = flatEmbeddings;
     if (!blockEmbeddings) return;
     const communities = extractRowCommunities(blockEmbeddings, n, dim, start, end, threshold, (rows) =>
       self.postMessage({ type: "blockProgress", id, rows }),
+      seedFirst,
     );
     self.postMessage({ type: "blockResults", id, communities });
   }

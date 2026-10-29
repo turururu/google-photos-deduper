@@ -17,7 +17,8 @@ export function rowCluster(row: Float32Array, threshold: number, minSize = 2): n
 
 /**
  * Candidate community of every row in [start, end) against all `n` embeddings
- * (L2-normalised, so cosine = dot product). Rows come back in row order.
+ * (L2-normalised, so cosine = dot product). Rows come back in row order; with
+ * `seedFirst` each cluster starts with its own row.
  */
 export function extractRowCommunities(
   flat: Float32Array,
@@ -27,6 +28,7 @@ export function extractRowCommunities(
   end: number,
   threshold: number,
   onRows?: (done: number) => void,
+  seedFirst = false,
 ): number[][] {
   const out: number[][] = [];
   const row = new Float32Array(n);
@@ -47,7 +49,7 @@ export function extractRowCommunities(
       row[j] = s0 + s1 + s2 + s3;
     }
     const c = rowCluster(row, threshold);
-    if (c) out.push(c);
+    if (c) out.push(seedFirst ? [i, ...c.filter((x) => x !== i)] : c);
     if (onRows && (i - start + 1) % 64 === 0) onRows(i - start + 1);
   }
   return out;

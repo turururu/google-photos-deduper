@@ -25,7 +25,7 @@ function formatWindow(sec: number): string {
 interface ScanConfigProps {
   settings: ScanSettings
   onSettingsChange: (settings: Partial<ScanSettings>) => void
-  onStartScan: () => void
+  onStartScan: (opts?: { full?: boolean }) => void
   hasGptk: boolean
 }
 
@@ -69,9 +69,21 @@ export function ScanConfig({
           fullWidth
           size="large"
           startIcon={<SearchRoundedIcon />}
-          onClick={onStartScan}
-          sx={{ mb: 2 }}>
+          onClick={() => onStartScan()}
+          sx={{ mb: 1 }}>
           Scan Library
+        </Button>
+        <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 1 }}>
+          Full-mode scans resume from the saved scan: only photos added since then are compared. Changing the
+          threshold, mode or date range scans everything again.
+        </Typography>
+        <Button
+          variant="outlined"
+          fullWidth
+          size="small"
+          onClick={() => onStartScan({ full: true })}
+          sx={{ mb: 2 }}>
+          Full rescan (ignore saved scan)
         </Button>
 
         <Accordion

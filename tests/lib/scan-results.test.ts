@@ -6,7 +6,7 @@
  * future condition additions without relying on reducer state boilerplate.
  */
 import { describe, it, expect } from "vitest"
-import { areScanResultsValid } from "../../lib/scan-results"
+import { areScanResultsValid, canResumeScan, carryOverSelection, scanMetaFor } from "../../lib/scan-results"
 
 describe("areScanResultsValid", () => {
   it("returns true when both account emails match", () => {
@@ -52,5 +52,29 @@ describe("areScanResultsValid", () => {
         { accountEmail: undefined }
       )
     ).toBe(true)
+  })
+})
+
+describe("incremental scan support", () => {
+  const st = { scanMode: "full" as const, similarityThreshold: 0.9, dateRange: undefined }
+  it("resumes only full-mode results made with the same settings", () => {
+    const meta = scanMetaFor(st, 5)
+    expect(canResumeScan(meta, st)).toBe(true)
+    expect(canResumeScan(meta, { ...st, similarityThreshold: 0.95 })).toBe(false)
+    expect(canResumeScan(meta, { ...st, dateRange: { from: "2020-01-01" } })).toBe(false)
+    expect(canResumeScan(meta, { ...st, scanMode: "smart" })).toBe(false)
+    expect(canResumeScan(undefined, st)).toBe(false)
+  })
+  it("carries selection over but resets changed and new groups", () => {
+    const r = carryOverSelection(
+      { selectedGroupIds: ["a", "b", "gone"], keptOverrides: { a: ["x"], b: ["y"] } },
+      ["a", "b"],
+      ["a", "b", "c", "d"],
+      ["b"],
+      ["d"],
+    )
+    expect([...r.selected].sort()).toEqual(["a", "b", "d"]) // c was deselected by the user
+    expect(Object.keys(r.keptOverrides)).toEqual(["a"])
+    expect([...r.reviewed]).toEqual(["a"])
   })
 })

@@ -7,6 +7,7 @@
 // 3. Group duplicates using fast community detection (cosine similarity)
 
 import { mergeCommunities } from "./community";
+import { mergeIncremental } from "./incremental";
 import type { GpdMediaItem, DuplicateGroup } from "./types";
 import { buildThumbUrl } from "./photo-url";
 import { StabilityTracker } from "./scan-log";
@@ -221,13 +222,31 @@ type ProgressCallback = (progress: DetectionProgress) => void;
 // Main entry points
 // ============================================================
 
+/** State of the previous scan, for comparing only photos that are new since then. */
+export interface IncrementalPrev {
+  groups: DuplicateGroup[];
+  knownKeys: Set<string>; // photos the previous scan already compared
+  nextSeq: number; // next unused group number
+}
+
+export interface IncrementalDelta {
+  changedIds: string[]; // old groups that gained or lost photos
+  newIds: string[];
+  droppedIds: string[]; // old groups that no longer exist
+  nextSeq: number;
+}
+
+/** Above this share of new photos a full pass is as cheap and gives the canonical result. */
+const MAX_INCREMENTAL_SHARE = 0.3;
+
 export async function fullDetectDuplicates(
   mediaItems: GpdMediaItem[],
   threshold: number,
   onProgress?: ProgressCallback,
   signal?: AbortSignal,
   logger?: ScanLogger,
-): Promise<{ groups: DuplicateGroup[]; timing: ScanTiming }> {
+  incremental?: IncrementalPrev,
+): Promise<{ groups: DuplicateGroup[]; timing: ScanTiming; delta?: IncrementalDelta }> {
   const scanStart = performance.now();
 
   const dedupedItems = dedupeByDedupKey(mediaItems);
@@ -338,13 +357,59 @@ export async function fullDetectDuplicates(
     (i) => candidates[i].creationTimestamp ?? 0,
   );
   const t3 = performance.now();
-  const indexGroups = await runCommunityDetectionInWorker(
-    embeddings,
-    threshold,
-    timestamps,
-    workerUrl,
-    trackedProgress,
-    signal,
+
+  const validKeys = validIndices.map((i) => candidates[i].mediaKey);
+  const oldPos: number[] = [];
+  const newPos: number[] = [];
+  validKeys.forEach((k, p) => (incremental?.knownKeys.has(k) ? oldPos : newPos).push(p));
+  if (incremental && incremental.groups.length > 0 && newPos.length <= MAX_INCREMENTAL_SHARE * validKeys.length) {
+    const order = [...oldPos, ...newPos];
+    const ordered = order.map((p) => embeddings[p]);
+    const keys = order.map((p) => validKeys[p]);
+    const clusters =
+      newPos.length > 0
+        ? await runCommunityDetectionInWorker(ordered, threshold, [], workerUrl, trackedProgress, signal, [oldPos.length, ordered.length], true)
+        : [];
+    const merged = mergeIncremental(incremental.groups, keys, oldPos.length, clusters, incremental.nextSeq);
+    const oldById = new Map(incremental.groups.map((g) => [g.id, g]));
+    const byKey = new Map(order.map((p, i) => [validKeys[p], { item: candidates[validIndices[p]], emb: ordered[i] }]));
+    const groups: DuplicateGroup[] = merged.groups.map((d) => {
+      if (d.status === "unchanged") return oldById.get(d.id)!;
+      const items = d.mediaKeys
+        .map((k) => byKey.get(k)!.item)
+        .sort((a, b) => (a.creationTimestamp ?? 0) - (b.creationTimestamp ?? 0));
+      return {
+        id: d.id,
+        mediaKeys: items.map((i) => i.mediaKey),
+        originalMediaKey: selectDefaultKeep(items),
+        similarity: meanPairwiseSimilarity(d.mediaKeys.map((k) => byKey.get(k)!.emb), threshold),
+      };
+    });
+    const communityDetectionMs = Math.round(performance.now() - t3);
+    console.log(`[GPD] incremental detection: ${newPos.length} new of ${validKeys.length} in ${communityDetectionMs}ms`);
+    await logger?.phaseComplete("communityDetectionMs", communityDetectionMs);
+    return {
+      groups,
+      timing: {
+        totalItems: mediaItems.length,
+        candidates: candidates.length,
+        cacheHits,
+        fetchThumbnailsMs,
+        computeEmbeddingsMs,
+        communityDetectionMs,
+        totalMs: Math.round(performance.now() - scanStart),
+      },
+      delta: {
+        changedIds: merged.groups.filter((g) => g.status === "changed").map((g) => g.id),
+        newIds: merged.groups.filter((g) => g.status === "new").map((g) => g.id),
+        droppedIds: merged.droppedIds,
+        nextSeq: merged.nextSeq,
+      },
+    };
+  }
+
+  const indexGroups = mergeCommunities(
+    await runCommunityDetectionInWorker(embeddings, threshold, timestamps, workerUrl, trackedProgress, signal),
   );
   const communityDetectionMs = Math.round(performance.now() - t3);
   const totalMs = Math.round(performance.now() - scanStart);
@@ -1003,8 +1068,9 @@ export function detectWorkerCount(n: number, dim: number, cores = navigator.hard
 }
 
 /**
- * Full pairwise detection split across a pool of workers. Rows are handed out in
- * blocks and results merged in row order, so the outcome equals a single-thread run.
+ * Candidate communities for rows [rows[0], rows[1]) against all embeddings (all rows by
+ * default), split across a pool of workers. Blocks are collected in row order, so the
+ * outcome equals a single-thread run. Callers merge the candidates themselves.
  */
 async function runCommunityDetectionInWorker(
   embeddings: Float32Array[],
@@ -1013,15 +1079,17 @@ async function runCommunityDetectionInWorker(
   workerUrl: string,
   onProgress?: ProgressCallback,
   signal?: AbortSignal,
+  rows: [number, number] = [0, embeddings.length],
+  seedFirst = false,
 ): Promise<number[][]> {
   const n = embeddings.length;
-  if (n === 0) return [];
+  if (n === 0 || rows[1] <= rows[0]) return [];
   const dim = embeddings[0].length;
   const flat = new Float32Array(n * dim);
   for (let i = 0; i < n; i++) flat.set(embeddings[i], i * dim);
 
   const blocks: [number, number][] = [];
-  for (let s = 0; s < n; s += BLOCK_ROWS) blocks.push([s, Math.min(s + BLOCK_ROWS, n)]);
+  for (let s = rows[0]; s < rows[1]; s += BLOCK_ROWS) blocks.push([s, Math.min(s + BLOCK_ROWS, rows[1])]);
   const results: number[][][] = new Array(blocks.length);
   const rowsDone = new Map<number, number>(); // block id -> rows reported so far
   let finishedRows = 0;
@@ -1032,7 +1100,7 @@ async function runCommunityDetectionInWorker(
   const report = () => {
     let inFlight = 0;
     for (const v of rowsDone.values()) inFlight += v;
-    onProgress?.({ phase: "detecting_duplicates", current: Math.min(n, finishedRows + inFlight), total: n });
+    onProgress?.({ phase: "detecting_duplicates", current: Math.min(rows[1] - rows[0], finishedRows + inFlight), total: rows[1] - rows[0] });
   };
 
   return new Promise<number[][]>((resolve, reject) => {
@@ -1052,7 +1120,7 @@ async function runCommunityDetectionInWorker(
       if (next >= blocks.length) return;
       const id = next++;
       const [start, end] = blocks[id];
-      const data = { n, dim, threshold, start, end, id } as Record<string, unknown>;
+      const data = { n, dim, threshold, start, end, id, seedFirst } as Record<string, unknown>;
       if (first) data.flatEmbeddings = flat // structured clone: each worker gets its own copy
       w.postMessage({ type: "detectBlock", data });
     };
@@ -1072,7 +1140,7 @@ async function runCommunityDetectionInWorker(
           report();
           if (--pending === 0) {
             stop();
-            resolve(mergeCommunities(results.flat()));
+            resolve(results.flat());
           } else dispatch(w, false);
         }
       };

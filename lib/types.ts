@@ -237,6 +237,7 @@ export interface StoredState {
     keptOverrides: Record<string, string[]>;
   };
   settings: ScanSettings;
+  scanMeta?: import("./scan-results").ScanMeta;
   reviewed?: { scanDate?: number; ids: string[] };
   viewPrefs?: import("./group-view").ViewPrefs;
   keepOrder?: "oldest" | "newest";
