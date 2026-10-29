@@ -34,6 +34,7 @@ function renderActionBar(props: Props = {}) {
     onDeselectAll: vi.fn(),
     onSelectIdentical: vi.fn(),
     onTrash: vi.fn(),
+    onReviewBin: vi.fn(),
     onRescan: vi.fn(),
   }
   const merged = { ...defaults, ...props }
