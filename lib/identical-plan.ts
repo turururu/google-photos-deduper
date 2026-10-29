@@ -9,6 +9,7 @@ export interface GroupPlan {
   kept: string[]; // mediaKeys that stay
   trash: { key: string; keptKey: string; score: PairScore }[]; // each judged against a kept photo
   fully: boolean; // everything but one photo is trashed
+  forced?: boolean; // keep-one mode: `kept` replaces earlier keep marks instead of widening them
 }
 
 export const passes = (s: PairScore, t: PixelThresholds) =>
@@ -27,7 +28,7 @@ export function planGroup(
   items: Record<string, GpdMediaItem>,
   scores: PairScore[],
   thresholds: PixelThresholds,
-  opts: { keepOrder: KeepOrder; existingKept?: Set<string>; meta?: NearExactOptions; forceOne?: boolean },
+  opts: { keepOrder: KeepOrder; existingKept?: Set<string>; meta?: NearExactOptions; forceOne?: boolean; reviewed?: boolean },
 ): GroupPlan | null {
   const meta = opts.meta ?? DEFAULT_NEAR_EXACT;
   const list = group.mediaKeys.map((k) => items[k]).filter(Boolean);
@@ -35,8 +36,10 @@ export function planGroup(
   const byPair = new Map(scores.map((s) => [pairKey(s.a, s.b), s]));
   const ranked = [...list].sort(keepComparator(opts.keepOrder));
 
+  // Keep-one mode ignores earlier keep marks, except in groups the user marked reviewed.
+  const honourMarks = !opts.forceOne || opts.reviewed === true;
   const isLocked = (i: GpdMediaItem) =>
-    i.isFavorite === true || i.duration !== undefined || opts.existingKept?.has(i.mediaKey) === true;
+    i.isFavorite === true || i.duration !== undefined || (honourMarks && opts.existingKept?.has(i.mediaKey) === true);
 
   const reps: GpdMediaItem[] = ranked.filter(isLocked);
   const trash: GroupPlan["trash"] = [];
@@ -71,6 +74,7 @@ export function planGroup(
     kept: reps.map((r) => r.mediaKey),
     trash,
     fully: trash.length === list.length - 1,
+    forced: opts.forceOne || undefined,
   };
 }
 
@@ -79,7 +83,7 @@ export function planAll(
   items: Record<string, GpdMediaItem>,
   scan: IdenticalScan,
   thresholds: PixelThresholds,
-  opts: { keepOrder: KeepOrder; keptOverrides?: Record<string, Set<string>>; meta?: NearExactOptions; forceOne?: boolean },
+  opts: { keepOrder: KeepOrder; keptOverrides?: Record<string, Set<string>>; meta?: NearExactOptions; forceOne?: boolean; reviewedIds?: Set<string> },
 ): GroupPlan[] {
   const out: GroupPlan[] = [];
   for (const g of groups) {
@@ -87,6 +91,7 @@ export function planAll(
     if (!scores) continue;
     const plan = planGroup(g, items, scores, thresholds, {
       forceOne: opts.forceOne,
+      reviewed: opts.reviewedIds?.has(g.id),
       keepOrder: opts.keepOrder,
       existingKept: opts.keptOverrides?.[g.id],
       meta: opts.meta,
@@ -136,7 +141,7 @@ export function applyPlans(
   const nextKept = { ...kept }
   for (const p of plans) {
     nextSel.add(p.groupId)
-    nextKept[p.groupId] = new Set([...(kept[p.groupId] ?? []), ...p.kept])
+    nextKept[p.groupId] = new Set(p.forced ? p.kept : [...(kept[p.groupId] ?? []), ...p.kept])
   }
   return { selected: nextSel, kept: nextKept }
 }

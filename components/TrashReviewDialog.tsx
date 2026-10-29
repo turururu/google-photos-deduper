@@ -49,9 +49,12 @@ function Side({ item, role, empty = "nothing" }: { item?: GpdMediaItem; role: "t
       {item ? (
         <>
           <Box
-            component={item.productUrl ? "a" : "div"}
-            {...(item.productUrl ? { href: item.productUrl, target: "_blank", rel: "noreferrer", title: "Open in Google Photos" } : {})}
-            sx={{ display: "block", border: 2, borderColor: color, borderRadius: 0.5, lineHeight: 0, width: "fit-content", cursor: item.productUrl ? "pointer" : "default" }}>
+            component="a"
+            href={item.productUrl ?? `https://photos.google.com/photo/${item.mediaKey}`}
+            target="_blank"
+            rel="noreferrer"
+            title="Open in Google Photos"
+            sx={{ display: "block", border: 2, borderColor: color, borderRadius: 0.5, lineHeight: 0, width: "fit-content", cursor: "pointer" }}>
             <Thumb item={item} size={116} />
           </Box>
           <Typography variant="caption" color="text.secondary" component="div" noWrap title={item.fileName}>
@@ -136,11 +139,10 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
         {loading && <LinearProgress sx={{ mb: 1 }} />}
         {error && <Typography color="error" variant="body2">Could not load similarities: {error}</Typography>}
         <Typography variant="body2" sx={{ mb: 1 }}>
-          Left: what is in the bin. Right: the closest photo that stays in your library (click a photo to open it in Google Photos). Each bin photo is compared with the photos of its group that stay. It counts as covered when
-          one of them looks the same and has about the same resolution.{" "}
-          {review.rows.length.toLocaleString()} in the bin: {review.counts.matched.toLocaleString()} covered
+          Left: what is in the bin. Right: the closest photo that stays in your library (click a photo to open it in Google Photos). Each bin photo is compared with the photos of its group that stay. A close match means one of them looks the same and has about the same resolution.{" "}
+          {review.rows.length.toLocaleString()} in the bin: {review.counts.matched.toLocaleString()} with a close match in library
           {review.counts["no-match"] > 0 && `, ${review.counts["no-match"].toLocaleString()} with no close match`}
-          {review.counts["no-keeper"] > 0 && `, ${review.counts["no-keeper"].toLocaleString()} with no copy staying`}
+          {review.counts["no-keeper"] > 0 && `, ${review.counts["no-keeper"].toLocaleString()} with nothing left in library`}
           {review.counts.conflict > 0 && `, ${review.counts.conflict.toLocaleString()} kept by another group (blocked)`}.
         </Typography>
         {!loading && <Typography variant="caption" color="text.secondary" component="div">Similarity to the closest photo that stays — {spread}</Typography>}
@@ -190,7 +192,7 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
         <Button
           disabled={loading || matchedKeys.length === 0 || matchedKeys.length === review.rows.length}
           onClick={() => { onKeepOnly(matchedKeys); onClose() }}>
-          Keep the {(review.rows.length - matchedKeys.length).toLocaleString()} without a close match (trash only the {matchedKeys.length.toLocaleString()} covered)
+          Keep the {(review.rows.length - matchedKeys.length).toLocaleString()} without a close match (trash only the {matchedKeys.length.toLocaleString()} with a close match)
         </Button>
       </DialogActions>
     </Dialog>

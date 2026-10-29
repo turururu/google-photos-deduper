@@ -154,3 +154,18 @@ describe("planGroup forceOne", () => {
     expect(p.fully).toBe(true)
   })
 })
+
+describe("forceOne vs earlier keep marks", () => {
+  it("replaces earlier marks unless the group is reviewed", async () => {
+    const { planGroup, applyPlans } = await import("../../lib/identical-plan")
+    const mk = (k: string) => ({ mediaKey: k, dedupKey: k, thumb: "", timestamp: 1, resWidth: 10, resHeight: 10 }) as any
+    const items = { a: mk("a"), b: mk("b"), c: mk("c") }
+    const g = { id: "g", mediaKeys: ["a", "b", "c"], originalMediaKey: "a", similarity: 0.9 }
+    const T = { maxHamming: 2, maxColorMae: 4, maxCellDiff: 24 }
+    const o = { keepOrder: "oldest" as const, forceOne: true, existingKept: new Set(["a", "b"]) }
+    const p = planGroup(g, items, [], T, o)!
+    expect(p.kept).toHaveLength(1)
+    expect(applyPlans(new Set(), { g: new Set(["a", "b"]) }, [p]).kept.g.size).toBe(1)
+    expect(planGroup(g, items, [], T, { ...o, reviewed: true })!.kept.sort()).toEqual(["a", "b"])
+  })
+})

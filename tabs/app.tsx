@@ -1361,6 +1361,7 @@ export default function App() {
               mediaItems={state.mediaItems}
               keepOrder={keepOrder}
               keptOverrides={keptOverrides}
+              reviewedIds={reviewedIds}
               onClose={() => setSafeSelectOpen(false)}
               onApply={(plans, replace) => {
                 const r = applyPlans(selectedGroupIds, keptOverrides, plans, { replace })

@@ -36,6 +36,8 @@ interface Props {
   onClose: () => void
   keepOrder: KeepOrder
   keptOverrides: Record<string, Set<string>>
+  /** groups the user marked reviewed: their keep marks stay locked even in keep-one mode */
+  reviewedIds?: Set<string>
   /** Adds these groups to the selection and fixes each one's kept set. */
   onApply: (plans: GroupPlan[], replace: boolean) => void
 }
@@ -45,7 +47,7 @@ interface Props {
  * user tune the strictness while looking at the loosest groups that would
  * pass. Selecting never trashes anything.
  */
-export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keepOrder, keptOverrides, allGroups, onClose, onApply }: Props) {
+export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keepOrder, keptOverrides, reviewedIds, allGroups, onClose, onApply }: Props) {
   const [progress, setProgress] = useState<[number, number]>([0, 0])
   const [scan, setScan] = useState<IdenticalScan | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -86,16 +88,16 @@ export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keep
   }, [open])
 
   const meta = useMemo(() => ({ ...DEFAULT_NEAR_EXACT, maxTakenDiffMs: TIME_STEPS[timeStep] * 1000 }), [timeStep])
+  const floor = effectiveFloor(minSimilarity, similarityIsReal)
   const allPlans = useMemo(
     () =>
       scan
-        ? planAll(groups, mediaItems, scan, { maxHamming, maxColorMae, maxCellDiff }, { keepOrder, keptOverrides, meta, forceOne })
+        ? planAll(groups, mediaItems, scan, { maxHamming, maxColorMae, maxCellDiff }, { keepOrder, keptOverrides, meta, forceOne: forceOne && floor !== null, reviewedIds })
         : [],
     // overrides are read once per scan/threshold change; fine while the dialog is open
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder, meta, forceOne]
+    [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder, meta, forceOne, floor]
   )
-  const floor = effectiveFloor(minSimilarity, similarityIsReal)
   const plans = useMemo(
     () => filterPlans(allPlans, groups, { includeMixed, minSimilarity: floor }),
     [allPlans, groups, includeMixed, floor]
@@ -107,7 +109,7 @@ export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keep
   const { reasons, misses } = useMemo(() => {
     const reasons: Record<string, number> = {}
     const misses: Miss[] = []
-    if (!scan) return { reasons, misses }
+    if (!scan || forceOne) return { reasons, misses }
     const final = new Set(plans.map((p) => p.groupId))
     const bump = (r: string) => (reasons[r] = (reasons[r] ?? 0) + 1)
     for (const g of groups) {
@@ -134,7 +136,7 @@ export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keep
     }
     misses.sort((a, b) => (a.score?.cellDiff ?? Infinity) - (b.score?.cellDiff ?? Infinity))
     return { reasons, misses: misses.slice(0, 12) }
-  }, [scan, plans, groups, mediaItems, keepOrder, keptOverrides, meta, maxHamming, maxColorMae, maxCellDiff, includeMixed, floor])
+  }, [scan, plans, groups, mediaItems, keepOrder, keptOverrides, meta, maxHamming, maxColorMae, maxCellDiff, includeMixed, floor, forceOne])
   const freed = useMemo(
     () => summarizeTrash(plans.flatMap((p) => p.trash.map((t) => mediaItems[t.key]).filter(Boolean))),
     [plans, mediaItems]
@@ -186,13 +188,13 @@ export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keep
               label="Also pick identical copies inside mixed groups (the different photos stay)"
             />
             <FormControlLabel
-              control={<Checkbox size="small" checked={forceOne} onChange={(e) => setForceOne(e.target.checked)} />}
-              label="Keep only ONE photo per group (skips the pixel and time checks; set the similarity floor first)"
+              control={<Checkbox size="small" checked={forceOne} disabled={floor === null} onChange={(e) => setForceOne(e.target.checked)} />}
+              label="Keep only ONE photo per group (skips pixel and time checks, replaces earlier keep marks except in reviewed groups; favorites and videos always stay). Needs a similarity floor."
             />
             {forceOne && (
               <Typography variant="caption" color="warning.main" component="div">
                 Every other photo in the matching groups goes to the bin, even if it differs (bursts, different
-                moments). Review the bin before trashing: backups are made for anything not proven identical.
+                moments). Review the bin, and click “Save dated videos to folder” in the trash dialog first if you want a backup of the non-identical ones (it is not automatic).
               </Typography>
             )}
             {similarityIsReal ? (
