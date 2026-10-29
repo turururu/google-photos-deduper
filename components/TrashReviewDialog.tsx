@@ -25,7 +25,7 @@ interface Props {
   /** mediaKeys currently in the bin. */
   trashSet: Set<string>
   onClose: () => void
-  /** Shrink the bin to exactly these photos. */
+  /** Shrink the bin to exactly these photos (anything left out is restored to "keep"). */
   onKeepOnly: (mediaKeys: string[]) => void
 }
 
@@ -69,6 +69,7 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
     [groups, mediaItems, keptOf, trashSet, scan]
   )
   const shown = review.rows.filter((r) => filter === "all" || r.status !== "proven")
+  const binKeys = review.rows.map((r) => r.key)
   const provenKeys = review.rows.filter((r) => r.status === "proven").map((r) => r.key)
 
   return (
@@ -87,7 +88,7 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
           {!scan && !error && " Checking pixels…"}
         </Typography>
         <ToggleButtonGroup size="small" exclusive value={filter} onChange={(_, v) => v && setFilter(v)} sx={{ mb: 1 }}>
-          <ToggleButton value="problems">Needs a look</ToggleButton>
+          <ToggleButton value="problems">Candidates to restore</ToggleButton>
           <ToggleButton value="all">All</ToggleButton>
         </ToggleButtonGroup>
         {shown.slice(0, MAX_ROWS).map((r) => {
@@ -100,6 +101,11 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
               <Typography variant="caption">→ kept</Typography>
               {keeper ? <Thumb item={keeper} /> : <Box sx={{ width: 80 }} />}
               <Chip size="small" color={l.color} label={l.text} />
+              {r.status !== "conflict" && (
+                <Button size="small" onClick={() => onKeepOnly(binKeys.filter((k) => k !== r.key))}>
+                  Keep this one
+                </Button>
+              )}
               {r.score && (
                 <Typography variant="caption" color="text.secondary">
                   bits {r.score.hamming} · colour {r.score.colorMae.toFixed(1)} · local {r.score.cellDiff}
@@ -118,7 +124,7 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
         <Button
           disabled={!scan || provenKeys.length === 0 || provenKeys.length === review.rows.length}
           onClick={() => { onKeepOnly(provenKeys); onClose() }}>
-          Trash only the {provenKeys.length.toLocaleString()} identical
+          Restore the {(review.rows.length - provenKeys.length).toLocaleString()} not proven (trash only the {provenKeys.length.toLocaleString()} identical)
         </Button>
       </DialogActions>
     </Dialog>
