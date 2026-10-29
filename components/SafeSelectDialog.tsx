@@ -22,6 +22,7 @@ import { useBlobUrl } from "./useBlobUrl"
 
 const SAMPLE_SIZE = 24
 const TIME_STEPS = [2, 5, 10, 30, 60, 300, 3600, 86400] // seconds
+const stepForWindow = (sec = 0) => Math.max(0, TIME_STEPS.findIndex((t) => t >= sec))
 const timeLabel = (s: number) => (s < 60 ? `${s} s` : s < 3600 ? `${s / 60} min` : s < 86400 ? `${s / 3600} h` : "1 day")
 
 function Thumb({ item }: { item: GpdMediaItem }) {
@@ -37,6 +38,8 @@ function Thumb({ item }: { item: GpdMediaItem }) {
 
 interface Props {
   open: boolean
+  /** Window the scan used to bucket photos by taken time (smart mode); the time slider starts there. */
+  scanWindowSec?: number
   groups: DuplicateGroup[]
   /** Every group (not just the shown ones), to tell real similarity from the pre-fix fake value. */
   allGroups: DuplicateGroup[]
@@ -53,14 +56,14 @@ interface Props {
  * user tune the strictness while looking at the loosest groups that would
  * pass. Selecting never trashes anything.
  */
-export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOverrides, allGroups, onClose, onApply }: Props) {
+export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keepOrder, keptOverrides, allGroups, onClose, onApply }: Props) {
   const [progress, setProgress] = useState<[number, number]>([0, 0])
   const [scan, setScan] = useState<IdenticalScan | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [maxHamming, setMaxHamming] = useState(DEFAULT_PIXEL_THRESHOLDS.maxHamming)
   const [maxColorMae, setMaxColorMae] = useState(DEFAULT_PIXEL_THRESHOLDS.maxColorMae)
   const [maxCellDiff, setMaxCellDiff] = useState(DEFAULT_PIXEL_THRESHOLDS.maxCellDiff)
-  const [timeStep, setTimeStep] = useState(0)
+  const [timeStep, setTimeStep] = useState(() => stepForWindow(scanWindowSec))
   const [copyMsg, setCopyMsg] = useState<string | null>(null)
   const [replaceSelection, setReplaceSelection] = useState(true)
   const [includeMixed, setIncludeMixed] = useState(false)
@@ -74,6 +77,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
 
   useEffect(() => {
     if (!open) return
+    setTimeStep(stepForWindow(scanWindowSec))
     const ctrl = new AbortController()
     abortRef.current = ctrl
     setScan(null)
@@ -212,7 +216,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
               </Typography>
             )}
             <Typography variant="caption" component="div">
-              Max time between two photos: {timeLabel(TIME_STEPS[timeStep])} (raise only if copies lost their date, e.g. messenger saves)
+              Max time between two photos: {timeLabel(TIME_STEPS[timeStep])} (starts at the scan's window; raise only if copies lost their date)
             </Typography>
             <Slider size="small" min={0} max={TIME_STEPS.length - 1} step={1} value={timeStep}
               onChange={(_, v) => setTimeStep(v as number)} />

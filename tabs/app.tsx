@@ -1276,6 +1276,7 @@ export default function App() {
             />
             <SafeSelectDialog
               open={safeSelectOpen}
+              scanWindowSec={settings.scanMode === "smart" ? settings.smartWindowSec ?? 1 : undefined}
               groups={shownGroups}
               allGroups={groups}
               mediaItems={state.mediaItems}
