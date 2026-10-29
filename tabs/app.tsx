@@ -36,7 +36,7 @@ import { applyViewPrefs, effectiveSelection, trashScope, persistablePrefs, DEFAU
 import { buildClips, writeGroupClips } from "../lib/timelapse"
 import { buildContactSheets } from "../lib/contact-sheet"
 import { scanIdenticalGroups } from "../lib/identical-scan"
-import { provenIdentical } from "../lib/identical-plan"
+import { provenIdentical, applyPlans } from "../lib/identical-plan"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
 import { SafeSelectDialog } from "../components/SafeSelectDialog"
 import { TrashRestoreDialog, type TrashItem } from "../components/TrashRestoreDialog"
@@ -1275,15 +1275,9 @@ export default function App() {
               keptOverrides={keptOverrides}
               onClose={() => setSafeSelectOpen(false)}
               onApply={(plans) => {
-                setSelectedGroupIds(new Set(plans.map((p) => p.groupId)))
-                setKeptOverrides((prev) => {
-                  const next = { ...prev }
-                  for (const p of plans) {
-                    // never drop an already-kept photo
-                    next[p.groupId] = new Set([...(prev[p.groupId] ?? []), ...p.kept])
-                  }
-                  return next
-                })
+                const r = applyPlans(selectedGroupIds, keptOverrides, plans)
+                setSelectedGroupIds(r.selected)
+                setKeptOverrides(r.kept)
               }}
             />
             <TrashRestoreDialog
@@ -1314,6 +1308,7 @@ export default function App() {
                 if (next.selection !== "all" && viewPrefs.selection === "all") setSelSnapshot(new Set(selectedRef.current))
                 setViewPrefs(next)
               }}
+              selectedCount={selectedGroupIds.size}
               onRefreshSelection={() => setSelSnapshot(new Set(selectedRef.current))}
               shown={shownGroups.length}
               total={groups.length}

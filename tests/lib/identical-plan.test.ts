@@ -70,3 +70,12 @@ describe("provenIdentical", () => {
     expect([...s]).toEqual(["b"])
   })
 })
+
+import { applyPlans } from "../../lib/identical-plan"
+describe("applyPlans", () => {
+  it("never deselects a group or drops a kept photo", () => {
+    const r = applyPlans(new Set(["X", "G"]), { G: new Set(["k1"]) }, [{ groupId: "G", kept: ["k2"], trash: [], fully: true }])
+    expect([...r.selected].sort()).toEqual(["G", "X"])
+    expect([...r.kept.G].sort()).toEqual(["k1", "k2"])
+  })
+})

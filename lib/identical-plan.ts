@@ -106,3 +106,18 @@ export function provenIdentical(
   }
   return proven;
 }
+
+/** Merge plans into the current selection: never deselects a group or drops a kept photo. */
+export function applyPlans(
+  selected: Set<string>,
+  kept: Record<string, Set<string>>,
+  plans: GroupPlan[],
+): { selected: Set<string>; kept: Record<string, Set<string>> } {
+  const nextSel = new Set(selected)
+  const nextKept = { ...kept }
+  for (const p of plans) {
+    nextSel.add(p.groupId)
+    nextKept[p.groupId] = new Set([...(kept[p.groupId] ?? []), ...p.kept])
+  }
+  return { selected: nextSel, kept: nextKept }
+}

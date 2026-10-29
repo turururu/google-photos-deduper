@@ -46,9 +46,10 @@ interface Props {
   onKeepOrderChange: (o: "oldest" | "newest") => void
   onOpenTrash: () => void
   onRefreshSelection: () => void
+  selectedCount: number
 }
 
-export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, scanDate, reviewedCount, onSelectShown, keepOrder, onKeepOrderChange, onOpenTrash, onRefreshSelection }: Props) {
+export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, scanDate, reviewedCount, onSelectShown, keepOrder, onKeepOrderChange, onOpenTrash, onRefreshSelection, selectedCount }: Props) {
   const set = (p: Partial<ViewPrefs>) => onChange({ ...prefs, ...p })
   const age = scanDate ? describeScanAge(scanDate) : null
   const filtered = shown !== total
@@ -107,6 +108,11 @@ export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, s
           <ToggleButton value="selected">Marked</ToggleButton>
           <ToggleButton value="unselected">Unmarked</ToggleButton>
         </ToggleButtonGroup>
+        {prefs.selection === "unselected" && (
+          <Typography variant="body2" color="warning.main">
+            Trash still acts on all {selectedCount.toLocaleString()} marked groups, including hidden ones.
+          </Typography>
+        )}
         {prefs.selection !== "all" && (
           <Button size="small" onClick={onRefreshSelection}>Refresh marked</Button>
         )}
@@ -129,7 +135,7 @@ export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, s
                 Trash only affects groups matching the filters ({trashScopeCount.toLocaleString()}).
               </Typography>
             )}
-            <Button size="small" onClick={onSelectShown}>Select only shown</Button>
+            {prefs.selection === "all" && <Button size="small" onClick={onSelectShown}>Select only shown</Button>}
             <Button size="small" onClick={() => onChange({ ...DEFAULT_VIEW_PREFS, sort: prefs.sort })}>
               Clear filters
             </Button>
