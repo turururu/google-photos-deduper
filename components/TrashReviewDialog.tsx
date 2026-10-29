@@ -25,7 +25,7 @@ interface Props {
   /** mediaKeys currently in the bin. */
   trashSet: Set<string>
   onClose: () => void
-  /** Shrink the bin to exactly these photos (anything left out is restored to "keep"). */
+  /** Shrink the bin to exactly these photos (anything left out becomes kept in its group). */
   onKeepOnly: (mediaKeys: string[]) => void
 }
 
@@ -101,7 +101,7 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
               <Typography variant="caption">→ kept</Typography>
               {keeper ? <Thumb item={keeper} /> : <Box sx={{ width: 80 }} />}
               <Chip size="small" color={l.color} label={l.text} />
-              {r.status !== "conflict" && (
+              {(
                 <Button size="small" onClick={() => onKeepOnly(binKeys.filter((k) => k !== r.key))}>
                   Keep this one
                 </Button>

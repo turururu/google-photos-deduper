@@ -42,6 +42,7 @@ import { SafeSelectDialog } from "../components/SafeSelectDialog"
 import { TrashRestoreDialog, type TrashItem } from "../components/TrashRestoreDialog"
 import { appendTrashLog, markRestored, trashLogToCsv, type TrashLogEntry } from "../lib/trash-log"
 import { summarizeTrash } from "../lib/trash-summary"
+import { buildTrashBatch, keepPhotos } from "../lib/trash-batch"
 import { reviewTrash } from "../lib/trash-review"
 import { TrashReviewDialog } from "../components/TrashReviewDialog"
 import { selectDefaultKeep, type KeepOrder } from "../lib/duplicate-detector"
@@ -900,29 +901,9 @@ export default function App() {
   const handleTrash = useCallback(() => {
     if (state.status !== "results") return
 
-    const dedupKeys: string[] = []
-    const mediaKeysToTrash: string[] = []
-    for (const group of state.groups) {
-      if (!trashableIds.has(group.id)) continue
-      const keptSet = getKept(group)
-      for (const key of group.mediaKeys) {
-        if (keptSet.has(key)) continue
-        const item = state.mediaItems[key]
-        if (item?.dedupKey) {
-          dedupKeys.push(item.dedupKey)
-          mediaKeysToTrash.push(key)
-        }
-      }
-    }
-
-    if (dedupKeys.length === 0) return
-    const fullyTrashedGroups = countFullyTrashedGroups(
-      state.groups,
-      trashableIds,
-      getKept
-    )
-    const unreviewedGroups = [...trashableIds].filter((id) => !reviewedIds.has(id)).length
-    setTrashConfirm({ dedupKeys, mediaKeysToTrash, fullyTrashedGroups, unreviewedGroups })
+    const batch = buildTrashBatch(state.groups, state.mediaItems, trashableIds, getKept, reviewedIds)
+    if (batch.dedupKeys.length === 0) return
+    setTrashConfirm(batch)
   }, [state, trashableIds, reviewedIds, getKept])
 
   const [reviewBinOpen, setReviewBinOpen] = useState(false)
@@ -939,23 +920,22 @@ export default function App() {
         : 0,
     [binGroups, binSet, state, getKept]
   )
-  const handleBinKeepOnly = useCallback((keys: string[]) => {
-    const keep = new Set(keys)
-    setTrashConfirm((c) => {
-      if (!c) return c
-      const idx = c.mediaKeysToTrash.map((k, i) => (keep.has(k) ? i : -1)).filter((i) => i >= 0)
-      return {
-        ...c,
-        dedupKeys: idx.map((i) => c.dedupKeys[i]),
-        mediaKeysToTrash: idx.map((i) => c.mediaKeysToTrash[i]),
-        fullyTrashedGroups: 0, // proven photos always have a kept copy
-        unreviewedGroups:
-          state.status === "results"
-            ? state.groups.filter((g) => !reviewedIds.has(g.id) && g.mediaKeys.some((k) => keep.has(k))).length
-            : c.unreviewedGroups,
-      }
-    })
-  }, [state, reviewedIds])
+  // Photos left out of `keys` are restored: they become kept in their groups, so the main view
+  // agrees and the next Trash click does not queue them again.
+  const handleBinKeepOnly = useCallback(
+    (keys: string[]) => {
+      if (state.status !== "results") return
+      const trash = new Set(keys)
+      const restored = new Set(binSet)
+      for (const k of trash) restored.delete(k)
+      const next = keepPhotos(keptOverrides, state.groups, restored, getKept)
+      setKeptOverrides(next)
+      setTrashConfirm(
+        buildTrashBatch(state.groups, state.mediaItems, trashableIds, (g) => next[g.id] ?? getKept(g), reviewedIds)
+      )
+    },
+    [state, binSet, keptOverrides, getKept, trashableIds, reviewedIds]
+  )
 
   const [backupProgress, setBackupProgress] = useState<[number, number] | null>(null)
   const handleDownloadBackup = useCallback(async () => {
@@ -1479,7 +1459,7 @@ export default function App() {
           </Button>
           <Button
             onClick={handleTrashConfirmed}
-            disabled={backupProgress !== null || videoProgress !== null || binConflicts > 0}
+            disabled={backupProgress !== null || videoProgress !== null || binConflicts > 0 || !trashConfirm?.dedupKeys.length}
             variant="contained"
             color="error">
             Move to Trash
