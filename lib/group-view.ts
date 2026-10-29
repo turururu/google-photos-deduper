@@ -25,7 +25,7 @@ export const DEFAULT_VIEW_PREFS: ViewPrefs = {
   minSimilarity: 0,
   maxSimilarity: 1,
   onlyPairs: false,
-  noFavorites: false,
+  noFavorites: true,
   hideReviewed: false,
   takenFrom: "",
   takenTo: "",

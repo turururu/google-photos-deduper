@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { applyViewPrefs, effectiveSelection, trashScope, persistablePrefs, DEFAULT_VIEW_PREFS } from "../../lib/group-view"
+import { applyViewPrefs, effectiveSelection, trashScope, persistablePrefs, DEFAULT_VIEW_PREFS as DEFAULTS } from "../../lib/group-view"
 import type { GpdMediaItem, DuplicateGroup } from "../../lib/types"
 
 const it_ = (k: string, o: Partial<GpdMediaItem> = {}): GpdMediaItem => ({
@@ -13,7 +13,8 @@ const groups: DuplicateGroup[] = [
   { id: "B", mediaKeys: ["b1", "b2", "b3"], originalMediaKey: "b1", similarity: 0.999 },
   { id: "C", mediaKeys: ["c1", "c2"], originalMediaKey: "c1", similarity: 0.995 },
 ]
-const ids = (p = {}) => applyViewPrefs(groups, items, { ...DEFAULT_VIEW_PREFS, ...p }).map((g) => g.id)
+const BASE = { ...DEFAULTS, noFavorites: false }
+const ids = (p = {}) => applyViewPrefs(groups, items, { ...BASE, ...p }).map((g) => g.id)
 
 describe("applyViewPrefs", () => {
   it("sorts by similarity desc by default", () => expect(ids()).toEqual(["B", "C", "A"]))
@@ -28,12 +29,12 @@ describe("applyViewPrefs", () => {
 
 describe("effectiveSelection", () => {
   it("excludes selected groups hidden by filters", () => {
-    const shown = applyViewPrefs(groups, items, { ...DEFAULT_VIEW_PREFS, minSimilarity: 0.995 })
+    const shown = applyViewPrefs(groups, items, { ...BASE, minSimilarity: 0.995 })
     const eff = effectiveSelection(new Set(["A", "B", "C"]), shown)
     expect([...eff].sort()).toEqual(["B", "C"])
   })
   it("equals the selection when nothing is filtered", () => {
-    const eff = effectiveSelection(new Set(["A"]), applyViewPrefs(groups, items, DEFAULT_VIEW_PREFS))
+    const eff = effectiveSelection(new Set(["A"]), applyViewPrefs(groups, items, BASE))
     expect([...eff]).toEqual(["A"])
   })
 })
@@ -47,23 +48,23 @@ describe("date range and reviewed", () => {
       { id: "X", mediaKeys: ["x1", "x2"], originalMediaKey: "x1", similarity: 1 },
       { id: "Y", mediaKeys: ["y1", "y2"], originalMediaKey: "y1", similarity: 1 },
     ]
-    const r = (p = {}) => applyViewPrefs(gs, m, { ...DEFAULT_VIEW_PREFS, ...p }).map((g) => g.id)
+    const r = (p = {}) => applyViewPrefs(gs, m, { ...BASE, ...p }).map((g) => g.id)
     expect(r({ takenFrom: "2024-05-10", takenTo: "2024-05-10" })).toEqual(["X"])
     expect(r({ takenTo: "2024-01-01" })).toEqual(["Y"])
     expect(day(t)).toBeTruthy()
   })
   it("hides reviewed groups", () => {
-    const r = applyViewPrefs(groups, items, { ...DEFAULT_VIEW_PREFS, hideReviewed: true }, new Set(["B"])).map((g) => g.id)
+    const r = applyViewPrefs(groups, items, { ...BASE, hideReviewed: true }, new Set(["B"])).map((g) => g.id)
     expect(r).not.toContain("B")
   })
   it("does not persist the date range", () => {
-    expect(persistablePrefs({ ...DEFAULT_VIEW_PREFS, takenFrom: "2024-01-01" }).takenFrom).toBe("")
+    expect(persistablePrefs({ ...BASE, takenFrom: "2024-01-01" }).takenFrom).toBe("")
   })
 })
 
 describe("trashScope", () => {
   it("keeps reviewed+selected groups trashable while Hide reviewed is on", () => {
-    const prefs = { ...DEFAULT_VIEW_PREFS, hideReviewed: true }
+    const prefs = { ...BASE, hideReviewed: true }
     const reviewed = new Set(["B"])
     const shown = applyViewPrefs(groups, items, prefs, reviewed)
     expect(shown.map((g) => g.id)).not.toContain("B")
@@ -71,7 +72,7 @@ describe("trashScope", () => {
     expect([...eff]).toEqual(["B"])
   })
   it("still honors other filters", () => {
-    const prefs = { ...DEFAULT_VIEW_PREFS, hideReviewed: true, onlyPairs: true }
+    const prefs = { ...BASE, hideReviewed: true, onlyPairs: true }
     expect(trashScope(groups, items, prefs, new Set()).map((g) => g.id)).not.toContain("B")
   })
 })

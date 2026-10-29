@@ -77,6 +77,7 @@ export type AppAction =
       groups: DuplicateGroup[]
       totalItems: number
     }
+  | { type: "SIZES_LOADED"; sizes: Record<string, number> }
   | { type: "TRASH_PROGRESS"; trashedSoFar: number }
   | { type: "TRASH_COMPLETE"; trashedKeys: string[] }
   | { type: "TRASH_ERROR"; error: string }
@@ -202,6 +203,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         scanDate: "scanDate" in state ? state.scanDate : undefined,
         accountEmail: "accountEmail" in state ? state.accountEmail : undefined,
       }
+
+    case "SIZES_LOADED": {
+      if (state.status !== "results") return state
+      const mediaItems = { ...state.mediaItems }
+      for (const [k, size] of Object.entries(action.sizes)) {
+        if (mediaItems[k]) mediaItems[k] = { ...mediaItems[k], size }
+      }
+      return { ...state, mediaItems }
+    }
 
     case "TRASH_PROGRESS":
       if (state.status !== "trashing") return state

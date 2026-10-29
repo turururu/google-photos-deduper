@@ -388,6 +388,44 @@ async function restoreItems(requestId, args) {
 }
 
 // ============================================================
+// Command: listTrash
+// One page-run of the Google Photos trash (newest first), up to args.max items.
+// ============================================================
+
+async function listTrash(requestId, args) {
+  try {
+    const max = args.max || 3000
+    let pageId = args.pageId || null
+    const items = []
+    do {
+      const page = await Promise.race([
+        window.gptkApi.getTrashItems(pageId),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("Fetching trash timed out")), 60_000)
+        )
+      ])
+      for (const it of page?.items || []) {
+        items.push({
+          mediaKey: it.mediaKey,
+          dedupKey: it.dedupKey,
+          thumb: it.thumb,
+          timestamp: it.timestamp,
+          creationTimestamp: it.creationTimestamp,
+          resWidth: it.resWidth,
+          resHeight: it.resHeight,
+          duration: it.duration
+        })
+      }
+      pageId = page?.nextPageId || null
+    } while (pageId && items.length < max)
+    postResult("listTrash", requestId, { items, nextPageId: pageId })
+  } catch (error) {
+    console.error("[GPD] listTrash error:", error)
+    postError("listTrash", requestId, error)
+  }
+}
+
+// ============================================================
 // Command: healthCheck
 // Verifies GPTK is loaded and WIZ_global_data is available.
 // ============================================================
@@ -398,6 +436,28 @@ function healthCheck(requestId) {
   // oPEP7c is the signed-in account email in WIZ_global_data
   const accountEmail = hasWizData ? window.WIZ_global_data.oPEP7c || "" : ""
   postResult("healthCheck", requestId, { hasGptk, hasWizData, accountEmail })
+}
+
+// ============================================================
+// Command: fetchSizes
+// File size in bytes is not in the library listing; fetch it for the given keys.
+// ============================================================
+
+async function fetchSizes(requestId, args) {
+  try {
+    const keys = args.mediaKeys || []
+    const sizes = {}
+    for (const chunk of chunkArray(keys, 500)) {
+      const infos = await window.gptkApi.getBatchMediaInfo(chunk)
+      for (const info of infos || []) {
+        if (info?.mediaKey && typeof info.size === "number") sizes[info.mediaKey] = info.size
+      }
+    }
+    postResult("fetchSizes", requestId, { sizes })
+  } catch (error) {
+    console.error("[GPD] fetchSizes error:", error)
+    postError("fetchSizes", requestId, error)
+  }
 }
 
 // ============================================================
@@ -421,6 +481,12 @@ window.addEventListener("message", async (event) => {
       break
     case "restoreItems":
       await restoreItems(requestId, args)
+      break
+    case "listTrash":
+      await listTrash(requestId, args)
+      break
+    case "fetchSizes":
+      await fetchSizes(requestId, args)
       break
     case "healthCheck":
       healthCheck(requestId)

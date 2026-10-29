@@ -450,3 +450,12 @@ describe("scanDate persistence", () => {
     expect(s).toMatchObject({ scanDate: 123 })
   })
 })
+
+describe("SIZES_LOADED", () => {
+  it("merges sizes into results mediaItems", () => {
+    const s: any = { status: "results", groups: [], totalItems: 1, mediaItems: { a: { mediaKey: "a" } } }
+    const n: any = appReducer(s, { type: "SIZES_LOADED", sizes: { a: 5, zz: 1 } })
+    expect(n.mediaItems.a.size).toBe(5)
+    expect(n.mediaItems.zz).toBeUndefined()
+  })
+})

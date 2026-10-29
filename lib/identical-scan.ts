@@ -1,6 +1,6 @@
 import type { DuplicateGroup, GpdMediaItem } from "./types";
 import { buildThumbUrl } from "./photo-url";
-import { isNearExactCandidate } from "./near-exact";
+import { nearExactExclusions } from "./near-exact";
 import {
   colorMae,
   computeFingerprint,
@@ -64,6 +64,7 @@ export interface GroupPixelScore {
 
 export interface IdenticalScan {
   candidateCount: number;
+  rejected?: Record<string, number>; // metadata exclusion reason -> groups
   scores: GroupPixelScore[]; // candidates whose thumbnails all decoded
 }
 
@@ -77,16 +78,21 @@ export async function scanIdenticalGroups(
   mediaItems: Record<string, GpdMediaItem>,
   opts: { onProgress?: (done: number, total: number) => void; signal?: AbortSignal } = {},
 ): Promise<IdenticalScan> {
+  const rejected: Record<string, number> = {};
   const candidates = groups
     .map((g) => ({
       group: g,
       items: g.mediaKeys.map((k) => mediaItems[k]).filter(Boolean),
     }))
-    .filter(
-      (c) =>
-        c.items.length === c.group.mediaKeys.length &&
-        isNearExactCandidate(c.items, c.group.similarity),
-    );
+    .filter((c) => {
+      if (c.items.length !== c.group.mediaKeys.length) {
+        rejected.missing = (rejected.missing ?? 0) + 1;
+        return false;
+      }
+      const why = nearExactExclusions(c.items, c.group.similarity);
+      for (const r of why) rejected[r] = (rejected[r] ?? 0) + 1;
+      return why.length === 0;
+    });
 
   const scores: GroupPixelScore[] = [];
   const queue = [...candidates];
@@ -111,7 +117,7 @@ export async function scanIdenticalGroups(
     }
   };
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-  return { candidateCount: candidates.length, scores };
+  return { candidateCount: candidates.length, rejected, scores };
 }
 
 export function passingGroupIds(scan: IdenticalScan, t: PixelThresholds): string[] {

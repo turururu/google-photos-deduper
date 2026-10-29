@@ -108,10 +108,18 @@ export function SafeSelectDialog({ open, groups, mediaItems, onClose, onApply }:
           <>
             <Typography variant="body2" sx={{ mb: 2 }}>
               {scan.candidateCount.toLocaleString()} of {groups.length.toLocaleString()} groups
-              passed the metadata check (2–4 photos, taken within 2 s, same shape, no videos, one clear
-              best). <strong>{passing.length.toLocaleString()}</strong> also match pixel for pixel.
+              passed the metadata check (2–4 photos, taken within 2 s, same shape, no videos). <strong>{passing.length.toLocaleString()}</strong> also match pixel for pixel.
               Everything else stays for manual review.
             </Typography>
+            {scan.rejected && Object.keys(scan.rejected).length > 0 && (
+              <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 2 }}>
+                Groups failing each metadata rule (a group can fail several):{" "}
+                {Object.entries(scan.rejected)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([k, n]) => `${k} ${n.toLocaleString()}`)
+                  .join(" · ")}
+              </Typography>
+            )}
             <Typography variant="caption">Max structure difference: {maxHamming} / 64 bits</Typography>
             <Slider size="small" min={0} max={8} step={1} value={maxHamming}
               onChange={(_, v) => setMaxHamming(v as number)} />
@@ -123,8 +131,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, onClose, onApply }:
               onChange={(_, v) => setMaxCellDiff(v as number)} />
             <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
               Previews are small and cannot show a blink. Open a few groups and use Flicker compare before
-              trusting this. Re-uploads of the same photo at the same resolution are intentionally left for
-              manual review, so the count may be lower than expected.
+              trusting this.
             </Typography>
             <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>
               Loosest {sample.length} groups (by local difference) that would be selected — check none differ:

@@ -275,6 +275,7 @@ const DuplicateGroupRow = memo(function DuplicateGroupRow({
                         color="text.secondary"
                         sx={{ fontFamily: "monospace" }}>
                         {item.resWidth}×{item.resHeight}
+                        {item.size ? ` · ${(item.size / 1e6).toFixed(1)} MB` : ""}
                       </Typography>
                     )}
                     {item.timestamp ? (

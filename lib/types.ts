@@ -237,6 +237,7 @@ export interface StoredState {
   settings: ScanSettings;
   reviewed?: { scanDate?: number; ids: string[] };
   viewPrefs?: import("./group-view").ViewPrefs;
+  keepOrder?: "oldest" | "newest";
 }
 
 export interface ScanSettings {

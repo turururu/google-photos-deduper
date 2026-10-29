@@ -38,7 +38,8 @@ import { buildContactSheets } from "../lib/contact-sheet"
 import { passingGroupIds, scanIdenticalGroups } from "../lib/identical-scan"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
 import { SafeSelectDialog } from "../components/SafeSelectDialog"
-import { selectDefaultKeep } from "../lib/duplicate-detector"
+import { TrashRestoreDialog, type TrashItem } from "../components/TrashRestoreDialog"
+import { selectDefaultKeep, type KeepOrder } from "../lib/duplicate-detector"
 import { ScanLogger } from "../lib/scan-log"
 import theme from "../lib/theme"
 import { APP_ID, DEFAULT_SETTINGS } from "../lib/types"
@@ -237,19 +238,18 @@ export default function App() {
 
   const [safeSelectOpen, setSafeSelectOpen] = useState(false)
   const [viewPrefs, setViewPrefs] = useState<ViewPrefs>(DEFAULT_VIEW_PREFS)
+  const [keepOrder, setKeepOrder] = useState<KeepOrder>("oldest")
+  const [trashOpen, setTrashOpen] = useState(false)
+  const [trashItems, setTrashItems] = useState<TrashItem[]>([])
+  const [trashNext, setTrashNext] = useState<string | null>(null)
+  const [trashLoading, setTrashLoading] = useState(false)
+  const [trashError, setTrashError] = useState<string | null>(null)
+  const [restoring, setRestoring] = useState(false)
+  const [restoreMessage, setRestoreMessage] = useState<string | null>(null)
+  const trashReqRef = useRef<string | null>(null)
+  const restoreReqRef = useRef<{ id: string; keys: Set<string> } | null>(null)
   // Groups the user has looked at; persisted so a 13k-group review can span days.
   const [reviewedIds, setReviewedIds] = useState<Set<string>>(new Set())
-  const handleToggleReviewed = useCallback((groupId: string, value?: boolean) => {
-    setReviewedIds((prev) => {
-      const has = prev.has(groupId)
-      const want = value ?? !has
-      if (want === has) return prev
-      const next = new Set(prev)
-      if (want) next.add(groupId)
-      else next.delete(groupId)
-      return next
-    })
-  }, [])
 
   const handleDeselectAll = useCallback(() => {
     setSelectedGroupIds(new Set())
@@ -378,6 +378,27 @@ export default function App() {
                 error: result.error || "Scan failed"
               })
             }
+          } else if (result.command === "listTrash") {
+            if (result.requestId !== trashReqRef.current) break
+            trashReqRef.current = null
+            setTrashLoading(false)
+            if (result.success) {
+              const d = result.data as { items: TrashItem[]; nextPageId: string | null }
+              setTrashItems((prev) => {
+                const seen = new Set(prev.map((i) => i.mediaKey))
+                return [...prev, ...d.items.filter((i) => !seen.has(i.mediaKey))]
+              })
+              setTrashNext(d.nextPageId)
+            } else {
+              setTrashError(result.error || "Could not load trash")
+            }
+          } else if (result.command === "fetchSizes") {
+            if (result.success) {
+              dispatch({ type: "SIZES_LOADED", sizes: (result.data as { sizes: Record<string, number> }).sizes })
+            } else {
+              console.warn("[GPD] fetching file sizes failed:", result.error)
+              sizesRequestRef.current = null // allow a retry on the next state change
+            }
           } else if (result.command === "trashItems") {
             if (result.success) {
               const data = result.data as { trashedKeys: string[]; skippedKeys?: string[]; stoppedEarly?: string }
@@ -410,6 +431,17 @@ export default function App() {
             if (!result.success) {
               // Optimistic restore already happened in UI; show a non-blocking alert
               console.error("GPD: Restore failed:", result.error)
+            }
+            const pending = restoreReqRef.current
+            if (pending && pending.id === result.requestId) {
+              restoreReqRef.current = null
+              setRestoring(false)
+              if (result.success) {
+                setTrashItems((prev) => prev.filter((i) => !pending.keys.has(i.dedupKey)))
+                setRestoreMessage(`Restored ${pending.keys.size} items. Re-scan to see them in groups again.`)
+              } else {
+                setTrashError(result.error || "Restore failed")
+              }
             }
           }
           break
@@ -543,8 +575,9 @@ export default function App() {
   // Load saved settings and results on mount
   useEffect(() => {
     chrome.storage.local.get(
-      ["settings", "scanResults", "selections", "viewPrefs", "reviewed"],
+      ["settings", "scanResults", "selections", "viewPrefs", "reviewed", "keepOrder"],
       (result: Partial<StoredState>) => {
+        if (result.keepOrder === "newest") setKeepOrder("newest")
         if (result.viewPrefs) setViewPrefs({ ...DEFAULT_VIEW_PREFS, ...persistablePrefs(result.viewPrefs) })
         // Group ids are positional ("group-N"), so marks are only valid for the scan they were made on.
         if (
@@ -595,16 +628,38 @@ export default function App() {
         ? g.mediaKeys.map((k) => mediaItems[k]).filter(Boolean)
         : []
       const defaultKey =
-        groupItems.length > 0 ? selectDefaultKeep(groupItems) : g.originalMediaKey
+        groupItems.length > 0 ? selectDefaultKeep(groupItems, keepOrder) : g.originalMediaKey
       m.set(g.id, new Set([defaultKey]))
     }
     return m
-  }, [groups, mediaItems])
+  }, [groups, mediaItems, keepOrder])
 
   const getKept = useCallback(
     (group: DuplicateGroup): Set<string> =>
       keptOverrides[group.id] ?? defaultKeptSets.get(group.id) ?? new Set([group.originalMediaKey]),
     [keptOverrides, defaultKeptSets]
+  )
+
+  // Marking a group reviewed locks in its current keep pick, so later changes to
+  // the oldest/newest toggle or newly loaded file sizes can't silently swap it.
+  const handleToggleReviewed = useCallback(
+    (groupId: string, value?: boolean) => {
+      const has = reviewedIds.has(groupId)
+      const want = value ?? !has
+      if (want === has) return
+      setReviewedIds((prev) => {
+        const next = new Set(prev)
+        if (want) next.add(groupId)
+        else next.delete(groupId)
+        return next
+      })
+      if (want) {
+        const group = groups.find((g) => g.id === groupId)
+        if (group)
+          setKeptOverrides((prev) => (prev[groupId] ? prev : { ...prev, [groupId]: new Set(getKept(group)) }))
+      }
+    },
+    [reviewedIds, groups, getKept]
   )
 
   // Per-group kept sets: overridden groups use the live override Set (changes only for
@@ -693,6 +748,10 @@ export default function App() {
   }, [selectedGroupIds, keptOverrides, state.status, groups.length])
 
   useEffect(() => {
+    if (storageChecked) chrome.storage.local.set({ keepOrder })
+  }, [keepOrder, storageChecked])
+
+  useEffect(() => {
     if (storageChecked) chrome.storage.local.set({ viewPrefs: persistablePrefs(viewPrefs) })
   }, [viewPrefs, storageChecked])
 
@@ -704,6 +763,32 @@ export default function App() {
     if (kept.length !== reviewedIds.size) setReviewedIds(new Set(kept))
     else chrome.storage.local.set({ reviewed: { scanDate: state.scanDate, ids: kept } })
   }, [reviewedIds, groups, storageChecked, state])
+
+  // File sizes aren't in the library listing: fetch them once for grouped items
+  // (also upgrades older saved scans without a rescan).
+  const sizesRequestRef = useRef<string | null>(null)
+  useEffect(() => {
+    // One attempt per scan: items the API returns no size for must not retrigger this.
+    if (state.status !== "results" || sizesRequestRef.current === String(state.scanDate)) return
+    const missing = new Set<string>()
+    for (const g of state.groups)
+      for (const k of g.mediaKeys) if (state.mediaItems[k] && state.mediaItems[k].size === undefined) missing.add(k)
+    if (missing.size === 0) return
+    const requestId = generateRequestId()
+    sizesRequestRef.current = String(state.scanDate)
+    sendToServiceWorker({
+      app: APP_ID,
+      action: "gptkCommand",
+      command: "fetchSizes",
+      requestId,
+      args: { mediaKeys: [...missing] }
+    })
+  }, [state])
+
+  // A new order or filter should start at the top, not mid-list where the change is invisible.
+  useEffect(() => {
+    window.scrollTo({ top: 0 })
+  }, [viewPrefs])
 
   const shownGroups = useMemo(
     () => (mediaItems ? applyViewPrefs(groups, mediaItems, viewPrefs, reviewedIds) : groups),
@@ -967,6 +1052,56 @@ export default function App() {
     setUndoData(null)
   }, [undoData])
 
+  const loadTrash = useCallback((pageId: string | null) => {
+    const requestId = generateRequestId()
+    trashReqRef.current = requestId
+    setTrashLoading(true)
+    setTrashError(null)
+    sendToServiceWorker({
+      app: APP_ID,
+      action: "gptkCommand",
+      command: "listTrash",
+      requestId,
+      args: { pageId, max: 2000 }
+    })
+    window.setTimeout(() => {
+      if (trashReqRef.current === requestId) {
+        trashReqRef.current = null
+        setTrashLoading(false)
+        setTrashError("Timed out loading the trash. Is a Google Photos tab open?")
+      }
+    }, 90_000)
+  }, [])
+
+  const handleOpenTrash = useCallback(() => {
+    setTrashOpen(true)
+    setRestoreMessage(null)
+    setTrashItems([])
+    setTrashNext(null)
+    loadTrash(null)
+  }, [loadTrash])
+
+  const handleRestoreFromTrash = useCallback((dedupKeys: string[]) => {
+    const requestId = generateRequestId()
+    restoreReqRef.current = { id: requestId, keys: new Set(dedupKeys) }
+    setRestoring(true)
+    setTrashError(null)
+    sendToServiceWorker({
+      app: APP_ID,
+      action: "gptkCommand",
+      command: "restoreItems",
+      requestId,
+      args: { dedupKeys }
+    })
+    window.setTimeout(() => {
+      if (restoreReqRef.current?.id === requestId) {
+        restoreReqRef.current = null
+        setRestoring(false)
+        setTrashError("No confirmation from Google Photos. Check the trash at photos.google.com/trash.")
+      }
+    }, 5 * 60_000)
+  }, [])
+
   const handleUndoClose = useCallback(() => {
     setUndoData(null)
   }, [])
@@ -1102,10 +1237,22 @@ export default function App() {
             />
             <SafeSelectDialog
               open={safeSelectOpen}
-              groups={state.groups}
+              groups={shownGroups}
               mediaItems={state.mediaItems}
               onClose={() => setSafeSelectOpen(false)}
               onApply={(ids) => setSelectedGroupIds(new Set(ids))}
+            />
+            <TrashRestoreDialog
+              open={trashOpen}
+              items={trashItems}
+              loading={trashLoading}
+              error={trashError}
+              hasMore={!!trashNext}
+              restoring={restoring}
+              restoreMessage={restoreMessage}
+              onLoadMore={() => loadTrash(trashNext)}
+              onRestore={handleRestoreFromTrash}
+              onClose={() => setTrashOpen(false)}
             />
             <ViewControls
               prefs={viewPrefs}
@@ -1116,6 +1263,9 @@ export default function App() {
               scanDate={state.scanDate}
               reviewedCount={reviewedIds.size}
               onSelectShown={() => setSelectedGroupIds(new Set(shownGroups.map((g) => g.id)))}
+              keepOrder={keepOrder}
+              onKeepOrderChange={setKeepOrder}
+              onOpenTrash={handleOpenTrash}
             />
             {shownGroups.length === 0 && (
               <Typography color="text.secondary" sx={{ py: 4, textAlign: "center" }}>

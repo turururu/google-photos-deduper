@@ -790,3 +790,43 @@ describe("getAllMediaItems — taken-date listing", () => {
     restore()
   })
 })
+
+// ============================================================
+// fetchSizes / listTrash
+// ============================================================
+
+describe("fetchSizes and listTrash", () => {
+  it("fetchSizes maps mediaKey -> size from getBatchMediaInfo", async () => {
+    ;(window as any).gptkApi = {
+      getBatchMediaInfo: vi.fn().mockResolvedValue([
+        { mediaKey: "a", size: 1234 },
+        { mediaKey: "b" },
+      ]),
+    }
+    const { messages, restore } = collectMessages()
+    sendCommand("fetchSizes", "req-sz", { mediaKeys: ["a", "b"] })
+    await flush()
+    const r = messages.find((m: any) => m.action === "gptkResult" && m.command === "fetchSizes") as any
+    expect(r?.success).toBe(true)
+    expect(r.data.sizes).toEqual({ a: 1234 })
+    restore()
+  })
+
+  it("listTrash returns trimmed items and the next page id", async () => {
+    ;(window as any).gptkApi = {
+      getTrashItems: vi.fn().mockResolvedValue({
+        items: [{ mediaKey: "m", dedupKey: "d", thumb: "t", timestamp: 5, extra: "x" }],
+        nextPageId: null,
+      }),
+    }
+    const { messages, restore } = collectMessages()
+    sendCommand("listTrash", "req-tr", {})
+    await flush()
+    const r = messages.find((m: any) => m.action === "gptkResult" && m.command === "listTrash") as any
+    expect(r?.success).toBe(true)
+    expect(r.data.items).toHaveLength(1)
+    expect(r.data.items[0].extra).toBeUndefined()
+    expect(r.data.nextPageId).toBeNull()
+    restore()
+  })
+})

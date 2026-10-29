@@ -34,11 +34,43 @@ export function compareKeepQuality(a: GpdMediaItem, b: GpdMediaItem): number {
   );
 }
 
-export function selectDefaultKeep(items: GpdMediaItem[]): string {
+/**
+ * Mean pairwise cosine similarity of L2-normalised embeddings (first 30 only,
+ * so huge groups stay cheap). Falls back to `fallback` if nothing to compare.
+ */
+export function meanPairwiseSimilarity(
+  embs: Float32Array[],
+  fallback: number,
+): number {
+  const e = embs.slice(0, 30);
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < e.length; i++)
+    for (let j = i + 1; j < e.length; j++) {
+      let dot = 0;
+      for (let k = 0; k < e[i].length; k++) dot += e[i][k] * e[j][k];
+      sum += dot;
+      n++;
+    }
+  return n ? Math.min(1, sum / n) : fallback;
+}
+
+export type KeepOrder = "oldest" | "newest";
+
+/**
+ * Keep pick: favorite > original quality > resolution > larger file >
+ * upload date (oldest or newest, per `order`).
+ */
+export function selectDefaultKeep(
+  items: GpdMediaItem[],
+  order: KeepOrder = "oldest",
+): string {
+  const dir = order === "newest" ? -1 : 1;
   const best = [...items].sort(
     (a, b) =>
       compareKeepQuality(a, b) ||
-      (a.creationTimestamp ?? 0) - (b.creationTimestamp ?? 0),
+      (b.size ?? 0) - (a.size ?? 0) ||
+      dir * ((a.creationTimestamp ?? 0) - (b.creationTimestamp ?? 0)),
   );
   return best[0].mediaKey;
 }
@@ -331,7 +363,7 @@ export async function fullDetectDuplicates(
       id: `group-${i}`,
       mediaKeys,
       originalMediaKey: selectDefaultKeep(items),
-      similarity: threshold, // Approximate; all items are at least this similar
+      similarity: meanPairwiseSimilarity(indices.map((idx) => embeddings[idx]), threshold),
     };
   });
 
@@ -484,7 +516,10 @@ export function withinGroupDuplicates(
         id: `group-${groupIdOffset + i}`,
         mediaKeys: sorted.map((x) => x.mediaKey),
         originalMediaKey: selectDefaultKeep(items),
-        similarity: threshold,
+        similarity: meanPairwiseSimilarity(
+          items.map((x) => embeddingMap.get(x.mediaKey)!),
+          threshold,
+        ),
       };
     });
 }
@@ -689,7 +724,7 @@ export async function smartDetectDuplicates(
       id: `group-${i}`,
       mediaKeys: items.map((x) => x.mediaKey),
       originalMediaKey: selectDefaultKeep(items),
-      similarity: threshold,
+      similarity: meanPairwiseSimilarity(indices.map((idx) => embeddings[idx]), threshold),
     };
   });
 

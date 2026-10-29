@@ -48,8 +48,8 @@ describe("nearExactExclusions", () => {
   it("excludes multiple favorites", () => {
     expect(nearExactExclusions(pair({ isFavorite: true }, { isFavorite: true }), 0.999)).toContain("multiple-favorites")
   })
-  it("excludes ambiguous keep pick", () => {
+  it("allows tied keep pick (pixel check decides)", () => {
     const same = [item(), item({ creationTimestamp: 2 })]
-    expect(nearExactExclusions(same, 0.999)).toContain("ambiguous-keep")
+    expect(nearExactExclusions(same, 0.999)).toEqual([])
   })
 })

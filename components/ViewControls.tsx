@@ -1,6 +1,8 @@
 import Alert from "@mui/material/Alert"
 import Box from "@mui/material/Box"
 import Button from "@mui/material/Button"
+import ToggleButton from "@mui/material/ToggleButton"
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup"
 import FormControlLabel from "@mui/material/FormControlLabel"
 import MenuItem from "@mui/material/MenuItem"
 import Select from "@mui/material/Select"
@@ -40,9 +42,12 @@ interface Props {
   scanDate?: number
   reviewedCount: number
   onSelectShown: () => void
+  keepOrder: "oldest" | "newest"
+  onKeepOrderChange: (o: "oldest" | "newest") => void
+  onOpenTrash: () => void
 }
 
-export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, scanDate, reviewedCount, onSelectShown }: Props) {
+export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, scanDate, reviewedCount, onSelectShown, keepOrder, onKeepOrderChange, onOpenTrash }: Props) {
   const set = (p: Partial<ViewPrefs>) => onChange({ ...prefs, ...p })
   const age = scanDate ? describeScanAge(scanDate) : null
   const filtered = shown !== total
@@ -53,6 +58,22 @@ export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, s
           {age.text}
         </Typography>
       )}
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, my: 1 }}>
+        <Typography variant="body2">When photos tie, keep the</Typography>
+        <ToggleButtonGroup
+          size="small"
+          exclusive
+          value={keepOrder}
+          onChange={(_, v) => v && onKeepOrderChange(v)}>
+          <ToggleButton value="oldest">Oldest upload</ToggleButton>
+          <ToggleButton value="newest">Newest upload</ToggleButton>
+        </ToggleButtonGroup>
+        <Typography variant="caption" color="text.secondary">
+          (after favorite, quality, resolution, file size)
+        </Typography>
+        <Box sx={{ flex: 1 }} />
+        <Button size="small" onClick={onOpenTrash}>Restore from trash…</Button>
+      </Box>
       {age?.stale && (
         <Alert severity="warning" sx={{ my: 1 }}>
           These results are {age.days} days old. Photos may have changed since — re-scan before trashing.

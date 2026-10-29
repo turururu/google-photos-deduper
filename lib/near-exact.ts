@@ -1,5 +1,4 @@
 import type { GpdMediaItem } from "./types";
-import { compareKeepQuality } from "./duplicate-detector";
 
 // Metadata-level pre-filter for "safe to bulk-select" groups. Passing here only
 // makes a group a *candidate*; the pixel check (lib/pixel-hash.ts) must also
@@ -25,8 +24,7 @@ export type ExclusionReason =
   | "video"
   | "time"
   | "aspect"
-  | "multiple-favorites"
-  | "ambiguous-keep";
+  | "multiple-favorites";
 
 export function nearExactExclusions(
   items: GpdMediaItem[],
@@ -60,11 +58,8 @@ export function nearExactExclusions(
   if (items.filter((i) => i.isFavorite === true).length > 1)
     out.push("multiple-favorites");
 
-  // Unambiguous keep pick: the best item must beat the runner-up on
-  // favorite/quality/resolution, not just on the upload-date tiebreak.
-  const ranked = [...items].sort(compareKeepQuality);
-  if (ranked.length > 1 && compareKeepQuality(ranked[0], ranked[1]) === 0)
-    out.push("ambiguous-keep");
+  // Ties on favorite/quality/resolution are fine here: the pixel check proves
+  // the photos are the same picture, and selectDefaultKeep breaks the tie.
 
   return out;
 }

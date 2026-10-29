@@ -758,3 +758,31 @@ describe("dedupeByDedupKey", () => {
     expect(dedupeByDedupKey([])).toEqual([])
   })
 })
+
+import { meanPairwiseSimilarity } from "../../lib/duplicate-detector"
+describe("meanPairwiseSimilarity", () => {
+  it("averages pairwise dot products of normalised vectors", () => {
+    const a = new Float32Array([1, 0]), b = new Float32Array([0, 1]), c = new Float32Array([1, 0])
+    expect(meanPairwiseSimilarity([a, c], 0.9)).toBeCloseTo(1)
+    expect(meanPairwiseSimilarity([a, b], 0.9)).toBeCloseTo(0)
+    expect(meanPairwiseSimilarity([a], 0.9)).toBe(0.9)
+  })
+})
+
+describe("selectDefaultKeep tie-breaks", () => {
+  const it0 = (k: string, over: any) => ({ mediaKey: k, dedupKey: k, thumb: "", timestamp: 1, creationTimestamp: 1, resWidth: 100, resHeight: 100, ...over })
+  it("prefers larger file at equal resolution, then date order", () => {
+    const a = it0("a", { size: 1000, creationTimestamp: 1 })
+    const b = it0("b", { size: 2000, creationTimestamp: 2 })
+    expect(selectDefaultKeep([a, b])).toBe("b")
+    const c = it0("c", { size: 1000, creationTimestamp: 1 })
+    const d = it0("d", { size: 1000, creationTimestamp: 2 })
+    expect(selectDefaultKeep([c, d], "oldest")).toBe("c")
+    expect(selectDefaultKeep([c, d], "newest")).toBe("d")
+  })
+  it("resolution still beats file size", () => {
+    const big = it0("big", { resWidth: 200, size: 10 })
+    const fat = it0("fat", { size: 9999 })
+    expect(selectDefaultKeep([fat, big])).toBe("big")
+  })
+})
