@@ -20,21 +20,26 @@ import type { ScanLogger } from "./scan-log";
  * trashing a favorite is the worst outcome this tool can produce. When a group
  * has several favorites — or none — the remaining criteria decide as before.
  */
-export function selectDefaultKeep(items: GpdMediaItem[]): string {
+export function compareKeepQuality(a: GpdMediaItem, b: GpdMediaItem): number {
   const qualityScore = (x: GpdMediaItem) =>
     x.isOriginalQuality === true ? 2 : x.isOriginalQuality === false ? 0 : 1;
   const favoriteScore = (x: GpdMediaItem) => (x.isFavorite === true ? 1 : 0);
-  const best = [...items].sort((a, b) => {
-    const favDiff = favoriteScore(b) - favoriteScore(a);
-    if (favDiff !== 0) return favDiff;
-    const qDiff = qualityScore(b) - qualityScore(a);
-    if (qDiff !== 0) return qDiff;
-    const pxDiff =
-      (b.resWidth ?? 0) * (b.resHeight ?? 0) -
-      (a.resWidth ?? 0) * (a.resHeight ?? 0);
-    if (pxDiff !== 0) return pxDiff;
-    return (a.creationTimestamp ?? 0) - (b.creationTimestamp ?? 0);
-  });
+  const favDiff = favoriteScore(b) - favoriteScore(a);
+  if (favDiff !== 0) return favDiff;
+  const qDiff = qualityScore(b) - qualityScore(a);
+  if (qDiff !== 0) return qDiff;
+  return (
+    (b.resWidth ?? 0) * (b.resHeight ?? 0) -
+    (a.resWidth ?? 0) * (a.resHeight ?? 0)
+  );
+}
+
+export function selectDefaultKeep(items: GpdMediaItem[]): string {
+  const best = [...items].sort(
+    (a, b) =>
+      compareKeepQuality(a, b) ||
+      (a.creationTimestamp ?? 0) - (b.creationTimestamp ?? 0),
+  );
   return best[0].mediaKey;
 }
 

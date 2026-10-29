@@ -270,26 +270,65 @@ async function trashItems(requestId, args) {
     )
 
     // Chunk to avoid HTTP 504 Gateway Timeout on large batches (fixes #107).
-    let trashed = 0
+    // If a chunk fails (e.g. an item was already deleted since the scan), bisect
+    // to isolate the offending items so the rest still get trashed.
+    const MAX_SKIPPED = Math.max(20, Math.ceil(total * 0.05))
+    const trashedDedup = new Set()
+    const skippedDedup = []
+    let firstError = null
+    let stopped = false
+    const trashBisect = async (keys) => {
+      if (keys.length === 0 || stopped) return
+      try {
+        await api.moveItemsToTrash(keys)
+        for (const k of keys) trashedDedup.add(k)
+      } catch (err) {
+        firstError = firstError || err
+        if (keys.length === 1) {
+          skippedDedup.push(keys[0])
+          // Nothing succeeding at all looks like an outage, not deleted items.
+          if (
+            skippedDedup.length > MAX_SKIPPED ||
+            (trashedDedup.size === 0 && skippedDedup.length >= 3)
+          )
+            stopped = true
+          return
+        }
+        const mid = Math.floor(keys.length / 2)
+        await trashBisect(keys.slice(0, mid))
+        await trashBisect(keys.slice(mid))
+      }
+    }
     for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]
-      await api.moveItemsToTrash(chunk)
-      trashed += chunk.length
-      console.log(
-        `[GPD] trash chunk ${i + 1}/${chunks.length}: ${trashed}/${total} done`
-      )
+      await trashBisect(chunks[i])
       postProgress(
         requestId,
-        trashed,
-        `Moved ${trashed} of ${total} items to trash`,
+        trashedDedup.size + skippedDedup.length,
+        `Moved ${trashedDedup.size} of ${total} items to trash`,
         "trashItems"
       )
     }
 
-    console.log(`[GPD] trash complete: ${total} items moved`)
+    if (stopped && trashedDedup.size === 0) throw firstError
+
+    const skippedSet = new Set(skippedDedup)
+    const trashedKeys = []
+    const skippedKeys = []
+    dedupKeys.forEach((dk, i) => {
+      const mk = mediaKeysToTrash[i]
+      if (mk === undefined) return
+      ;(skippedSet.has(dk) ? skippedKeys : trashedKeys).push(mk)
+    })
+    console.log(
+      `[GPD] trash complete: ${trashedDedup.size} moved, ${skippedDedup.length} skipped`
+    )
     postResult("trashItems", requestId, {
-      trashedCount: total,
-      trashedKeys: mediaKeysToTrash
+      trashedCount: trashedDedup.size,
+      trashedKeys,
+      skippedKeys,
+      // Set when too many items failed and the run stopped early; what was
+      // trashed so far is still reported so it can be undone.
+      stoppedEarly: stopped ? String(firstError?.message ?? firstError) : undefined
     })
   } catch (error) {
     console.error("[GPD] trash error:", error)

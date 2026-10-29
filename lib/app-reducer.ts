@@ -41,6 +41,8 @@ export type AppState =
       // > 0 means some duplicates spanning a split may not have been found.
       // Optional: results persisted before this existed won't carry it.
       bucketsSplit?: number
+      // When the scan finished. Set once; preserved across trash/undo/reload.
+      scanDate?: number
       accountEmail?: string
     }
   | {
@@ -51,6 +53,7 @@ export type AppState =
       totalToTrash: number
       trashedSoFar: number
       bucketsSplit?: number
+      scanDate?: number
       accountEmail?: string
     }
 
@@ -83,6 +86,7 @@ export type AppAction =
       groups: DuplicateGroup[]
       totalItems: number
       bucketsSplit?: number
+      scanDate?: number
       accountEmail?: string
     }
   | {
@@ -175,6 +179,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         groups: action.groups,
         totalItems: Object.keys(action.mediaItems).length,
         bucketsSplit: action.bucketsSplit ?? 0,
+        scanDate: Date.now(),
         accountEmail: "accountEmail" in state ? state.accountEmail : undefined,
       }
 
@@ -194,6 +199,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         totalToTrash: action.totalToTrash,
         trashedSoFar: 0,
         bucketsSplit: "bucketsSplit" in state ? state.bucketsSplit : 0,
+        scanDate: "scanDate" in state ? state.scanDate : undefined,
         accountEmail: "accountEmail" in state ? state.accountEmail : undefined,
       }
 
@@ -222,6 +228,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         groups: newGroups,
         totalItems: state.totalItems,
         bucketsSplit: state.bucketsSplit,
+        scanDate: state.scanDate,
         accountEmail: state.accountEmail,
       }
     }
@@ -236,6 +243,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         groups: action.groups,
         totalItems: action.totalItems,
         bucketsSplit: action.bucketsSplit ?? 0,
+        scanDate: action.scanDate,
         accountEmail: action.accountEmail,
       }
 
@@ -246,6 +254,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         groups: action.groups,
         totalItems: action.totalItems,
         bucketsSplit: "bucketsSplit" in state ? state.bucketsSplit : 0,
+        scanDate: "scanDate" in state ? state.scanDate : undefined,
         accountEmail: "accountEmail" in state ? state.accountEmail : undefined,
       }
 

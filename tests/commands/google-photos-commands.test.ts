@@ -388,8 +388,8 @@ describe("trashItems — chunking", () => {
     restore()
   })
 
-  it("reports error and stops on first API failure", async () => {
-    mockMoveItemsToTrash.mockRejectedValueOnce(new Error("HTTP 504"))
+  it("reports error when the API keeps failing", async () => {
+    mockMoveItemsToTrash.mockRejectedValue(new Error("HTTP 504"))
 
     const { messages, restore } = collectMessages()
     const dedupKeys = Array.from({ length: 400 }, (_, i) => `dk-${i}`)
@@ -397,14 +397,55 @@ describe("trashItems — chunking", () => {
     sendCommand("trashItems", "req-4", { dedupKeys, mediaKeysToTrash: [] })
     await flush()
 
-    // Only called once — stops after the first failure
-    expect(mockMoveItemsToTrash).toHaveBeenCalledTimes(1)
-
     const result = messages.find(
       (m: any) => m.action === "gptkResult" && m.command === "trashItems"
     ) as any
     expect(result?.success).toBe(false)
     expect(result?.error).toContain("HTTP 504")
+    mockMoveItemsToTrash.mockReset()
+    restore()
+  })
+
+  it("reports partial progress when it stops early after many skips", async () => {
+    // First half trashes fine; every key in the second half fails.
+    mockMoveItemsToTrash.mockImplementation(async (keys: string[]) => {
+      if (keys.some((k) => Number(k.slice(3)) >= 100)) throw new Error("boom")
+    })
+    const { messages, restore } = collectMessages()
+    const dedupKeys = Array.from({ length: 400 }, (_, i) => `dk-${i}`)
+    const mediaKeysToTrash = dedupKeys.map((k) => `mk-${k}`)
+    sendCommand("trashItems", "req-6", { dedupKeys, mediaKeysToTrash })
+    await flush()
+    const result = messages.find(
+      (m: any) => m.action === "gptkResult" && m.command === "trashItems"
+    ) as any
+    expect(result?.success).toBe(true)
+    expect(result.data.trashedKeys.length).toBeGreaterThan(0)
+    expect(result.data.stoppedEarly).toContain("boom")
+    mockMoveItemsToTrash.mockReset()
+    restore()
+  })
+
+  it("skips an item that can no longer be trashed and trashes the rest", async () => {
+    mockMoveItemsToTrash.mockImplementation(async (keys: string[]) => {
+      if (keys.includes("dk-3")) throw new Error("not found")
+    })
+
+    const { messages, restore } = collectMessages()
+    const dedupKeys = Array.from({ length: 10 }, (_, i) => `dk-${i}`)
+    const mediaKeysToTrash = dedupKeys.map((k) => `mk-${k}`)
+
+    sendCommand("trashItems", "req-5", { dedupKeys, mediaKeysToTrash })
+    await flush()
+
+    const result = messages.find(
+      (m: any) => m.action === "gptkResult" && m.command === "trashItems"
+    ) as any
+    expect(result?.success).toBe(true)
+    expect(result.data.skippedKeys).toEqual(["mk-dk-3"])
+    expect(result.data.trashedKeys).toHaveLength(9)
+    expect(result.data.trashedKeys).not.toContain("mk-dk-3")
+    mockMoveItemsToTrash.mockReset()
     restore()
   })
 })

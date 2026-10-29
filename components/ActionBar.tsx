@@ -14,6 +14,7 @@ interface ActionBarProps {
   duplicateCount: number
   onSelectAll: () => void
   onDeselectAll: () => void
+  onSelectIdentical: () => void
   onTrash: () => void
   onRescan: () => void
 }
@@ -24,6 +25,7 @@ export function ActionBar({
   duplicateCount,
   onSelectAll,
   onDeselectAll,
+  onSelectIdentical,
   onTrash,
   onRescan,
 }: ActionBarProps) {
@@ -74,6 +76,9 @@ export function ActionBar({
             startIcon={<CheckBoxOutlineBlankIcon />}
             onClick={onDeselectAll}>
             Deselect All
+          </Button>
+          <Button size="small" onClick={onSelectIdentical}>
+            Select identical…
           </Button>
           <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
           <Button

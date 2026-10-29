@@ -7,7 +7,7 @@
  * - Zoom button opens the photo viewer modal
  * - Zoom button does not trigger onToggleKept (stopPropagation)
  */
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, beforeAll } from "vitest"
 import { render, screen, fireEvent, act } from "@testing-library/react"
 import { ThemeProvider, createTheme } from "@mui/material/styles"
 import { DuplicateGroups } from "../../components/DuplicateGroups"
@@ -458,5 +458,71 @@ describe("trash whole group", () => {
       "aria-pressed",
       "false"
     )
+  })
+})
+
+// ============================================================
+// Keyboard review
+// ============================================================
+
+describe("DuplicateGroups — keyboard review", () => {
+  const g2 = makeGroup("g2", "img1", "img2")
+  const props = () => ({
+    ...defaultProps,
+    groups: [group, g2],
+    selectedGroupIds: new Set(["g1", "g2"]),
+    keptByGroupId: new Map([["g1", new Set(["img1"])], ["g2", new Set(["img1"])]]),
+    onToggleGroup: vi.fn(),
+    onToggleReviewed: vi.fn(),
+  })
+
+  beforeAll(() => {
+    // happy-dom lacks scrollIntoView
+    Element.prototype.scrollIntoView = vi.fn()
+  })
+
+  it("X toggles selection of the focused group and marks it reviewed", () => {
+    const p = props()
+    wrap(<DuplicateGroups {...p} />)
+    fireEvent.keyDown(window, { key: "x" })
+    expect(p.onToggleGroup).toHaveBeenCalledWith("g1")
+    expect(p.onToggleReviewed).toHaveBeenCalledWith("g1", true)
+  })
+
+  it("J moves focus to the next group", () => {
+    const p = props()
+    wrap(<DuplicateGroups {...p} />)
+    fireEvent.keyDown(window, { key: "j" })
+    fireEvent.keyDown(window, { key: "x" })
+    expect(p.onToggleGroup).toHaveBeenCalledWith("g2")
+  })
+
+  it("R toggles reviewed; ignored while typing in an input", () => {
+    const p = props()
+    wrap(<DuplicateGroups {...p} />)
+    fireEvent.keyDown(window, { key: "r" })
+    expect(p.onToggleReviewed).toHaveBeenCalledWith("g1")
+    p.onToggleReviewed.mockClear()
+    const input = document.createElement("input")
+    document.body.appendChild(input)
+    fireEvent.keyDown(input, { key: "r" })
+    expect(p.onToggleReviewed).not.toHaveBeenCalled()
+  })
+})
+
+describe("DuplicateGroups — keyboard safety", () => {
+  it("ignores keys pressed on a button or while a dialog is open", () => {
+    const onToggleGroup = vi.fn()
+    wrap(<DuplicateGroups {...defaultProps} onToggleGroup={onToggleGroup} />)
+    const btn = document.createElement("button")
+    document.body.appendChild(btn)
+    fireEvent.keyDown(btn, { key: "x" })
+    expect(onToggleGroup).not.toHaveBeenCalled()
+    const dlg = document.createElement("div")
+    dlg.setAttribute("role", "dialog")
+    document.body.appendChild(dlg)
+    fireEvent.keyDown(window, { key: "x" })
+    expect(onToggleGroup).not.toHaveBeenCalled()
+    dlg.remove()
   })
 })

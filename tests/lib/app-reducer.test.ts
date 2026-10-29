@@ -426,3 +426,27 @@ describe("SCAN_PROGRESS fetch position", () => {
     expect((next as { oldestUploadedAt?: number }).oldestUploadedAt).toBeUndefined()
   })
 })
+
+describe("scanDate persistence", () => {
+  const items = { a: { mediaKey: "a" }, b: { mediaKey: "b" } } as never
+  const groups = [{ id: "g", mediaKeys: ["a", "b"], originalMediaKey: "a", similarity: 1 }]
+
+  it("is restored by LOAD_SAVED_RESULTS", () => {
+    const s = appReducer({ status: "connecting" }, {
+      type: "LOAD_SAVED_RESULTS", mediaItems: items, groups, totalItems: 2, scanDate: 123,
+    })
+    expect(s).toMatchObject({ status: "results", scanDate: 123 })
+  })
+
+  it("survives trash and undo", () => {
+    let s = appReducer({ status: "connecting" }, {
+      type: "LOAD_SAVED_RESULTS", mediaItems: items, groups, totalItems: 2, scanDate: 123,
+    })
+    s = appReducer(s, { type: "TRASH_STARTED", totalToTrash: 1, mediaItems: items, groups, totalItems: 2 })
+    expect(s).toMatchObject({ status: "trashing", scanDate: 123 })
+    s = appReducer(s, { type: "TRASH_COMPLETE", trashedKeys: ["b"] })
+    expect(s).toMatchObject({ status: "results", scanDate: 123 })
+    s = appReducer(s, { type: "RESTORE_SNAPSHOT", mediaItems: items, groups, totalItems: 2 })
+    expect(s).toMatchObject({ scanDate: 123 })
+  })
+})

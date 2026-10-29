@@ -235,6 +235,8 @@ export interface StoredState {
     keptOverrides: Record<string, string[]>;
   };
   settings: ScanSettings;
+  reviewed?: { scanDate?: number; ids: string[] };
+  viewPrefs?: import("./group-view").ViewPrefs;
 }
 
 export interface ScanSettings {

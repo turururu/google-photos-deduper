@@ -1,6 +1,7 @@
 import { useCallback, useState, useEffect } from "react"
 import { keyframes } from "@emotion/react"
 import Box from "@mui/material/Box"
+import Button from "@mui/material/Button"
 import CardMedia from "@mui/material/CardMedia"
 import Chip from "@mui/material/Chip"
 import StarIcon from "@mui/icons-material/Star"
@@ -174,6 +175,14 @@ export function PhotoViewerModal({
   const [index, setIndex] = useState(initialIndex)
   const [slideDir, setSlideDir] = useState<"forward" | "backward">("forward")
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  // Flicker: cycle through the group's photos in place so differences pop out.
+  const [flicker, setFlicker] = useState(false)
+  useEffect(() => {
+    if (!open || !flicker || items.length < 2) return
+    const id = setInterval(() => setIndex((i) => (i + 1) % items.length), 450)
+    return () => clearInterval(id)
+  }, [open, flicker, items.length])
+  useEffect(() => { if (!open) setFlicker(false) }, [open])
 
   // Preload all images in the group up front
   const blobUrls = useGroupBlobUrls(items)
@@ -324,7 +333,16 @@ export function PhotoViewerModal({
           </Typography>
         )}
 
-        <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+        <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
+          {items.length > 1 && (
+            <Button
+              size="small"
+              onClick={() => setFlicker((f) => !f)}
+              aria-pressed={flicker}
+              sx={{ color: flicker ? "#FFC107" : "white", mr: 1 }}>
+              {flicker ? "Stop flicker" : "Flicker compare"}
+            </Button>
+          )}
           <IconButton
             onClick={onClose}
             aria-label="Close photo viewer"

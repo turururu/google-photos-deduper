@@ -31,6 +31,13 @@ import {
   smartDetectDuplicates
 } from "../lib/duplicate-detector"
 import type { DetectionProgress } from "../lib/duplicate-detector"
+import { ViewControls } from "../components/ViewControls"
+import { applyViewPrefs, effectiveSelection, trashScope, persistablePrefs, DEFAULT_VIEW_PREFS, type ViewPrefs } from "../lib/group-view"
+import { buildClips, writeGroupClips } from "../lib/timelapse"
+import { buildContactSheets } from "../lib/contact-sheet"
+import { passingGroupIds, scanIdenticalGroups } from "../lib/identical-scan"
+import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
+import { SafeSelectDialog } from "../components/SafeSelectDialog"
 import { selectDefaultKeep } from "../lib/duplicate-detector"
 import { ScanLogger } from "../lib/scan-log"
 import theme from "../lib/theme"
@@ -104,12 +111,15 @@ export default function App() {
     dedupKeys: string[]
     mediaKeysToTrash: string[]
     fullyTrashedGroups: number
+    unreviewedGroups: number
   } | null>(null)
 
   // Undo trash state: stored after a successful trash operation
   const [undoData, setUndoData] = useState<{
     dedupKeys: string[]
     count: number
+    skipped?: number
+    stoppedEarly?: string
     snapshot: {
       mediaItems: Record<string, GpdMediaItem>
       groups: DuplicateGroup[]
@@ -224,6 +234,22 @@ export default function App() {
   const handleSelectAll = useCallback(() => {
     setSelectedGroupIds(new Set(groups.map((g) => g.id)))
   }, [groups])
+
+  const [safeSelectOpen, setSafeSelectOpen] = useState(false)
+  const [viewPrefs, setViewPrefs] = useState<ViewPrefs>(DEFAULT_VIEW_PREFS)
+  // Groups the user has looked at; persisted so a 13k-group review can span days.
+  const [reviewedIds, setReviewedIds] = useState<Set<string>>(new Set())
+  const handleToggleReviewed = useCallback((groupId: string, value?: boolean) => {
+    setReviewedIds((prev) => {
+      const has = prev.has(groupId)
+      const want = value ?? !has
+      if (want === has) return prev
+      const next = new Set(prev)
+      if (want) next.add(groupId)
+      else next.delete(groupId)
+      return next
+    })
+  }, [])
 
   const handleDeselectAll = useCallback(() => {
     setSelectedGroupIds(new Set())
@@ -354,15 +380,22 @@ export default function App() {
             }
           } else if (result.command === "trashItems") {
             if (result.success) {
-              const data = result.data as { trashedKeys: string[] }
+              const data = result.data as { trashedKeys: string[]; skippedKeys?: string[]; stoppedEarly?: string }
               const trashedKeys = data.trashedKeys || []
               dispatch({ type: "TRASH_COMPLETE", trashedKeys })
               // Set undo data from the snapshot captured before trash
               if (preTrashSnapshotRef.current && pendingDedupKeysRef.current) {
+                const snapshot = preTrashSnapshotRef.current
+                // Undo only what was actually trashed (items deleted since the scan are skipped).
+                const dedupKeys = trashedKeys
+                  .map((k) => snapshot.mediaItems[k]?.dedupKey)
+                  .filter((k): k is string => !!k)
                 setUndoData({
-                  dedupKeys: pendingDedupKeysRef.current,
-                  count: pendingDedupKeysRef.current.length,
-                  snapshot: preTrashSnapshotRef.current
+                  dedupKeys,
+                  count: dedupKeys.length,
+                  skipped: data.skippedKeys?.length ?? 0,
+                  stoppedEarly: data.stoppedEarly,
+                  snapshot
                 })
                 preTrashSnapshotRef.current = null
                 pendingDedupKeysRef.current = null
@@ -471,6 +504,7 @@ export default function App() {
           mediaItemMap[item.mediaKey] = item
         }
 
+        setReviewedIds(new Set()) // positional group ids: marks from a previous scan are meaningless
         dispatch({
           type: "SCAN_COMPLETE",
           mediaItems: mediaItemMap,
@@ -509,8 +543,17 @@ export default function App() {
   // Load saved settings and results on mount
   useEffect(() => {
     chrome.storage.local.get(
-      ["settings", "scanResults", "selections"],
+      ["settings", "scanResults", "selections", "viewPrefs", "reviewed"],
       (result: Partial<StoredState>) => {
+        if (result.viewPrefs) setViewPrefs({ ...DEFAULT_VIEW_PREFS, ...persistablePrefs(result.viewPrefs) })
+        // Group ids are positional ("group-N"), so marks are only valid for the scan they were made on.
+        if (
+          result.reviewed &&
+          result.scanResults &&
+          result.reviewed.scanDate === result.scanResults.scanDate
+        ) {
+          setReviewedIds(new Set(result.reviewed.ids))
+        }
         if (result.settings) {
           setSettings(result.settings)
         }
@@ -531,6 +574,7 @@ export default function App() {
             groups: result.scanResults.groups,
             totalItems: result.scanResults.totalItems,
             bucketsSplit: result.scanResults.bucketsSplit,
+            scanDate: result.scanResults.scanDate,
             accountEmail: result.scanResults.accountEmail
           })
         }
@@ -601,6 +645,8 @@ export default function App() {
 
   const totalItems = state.status === "results" ? state.totalItems : 0
   const accountEmailForStorage = state.status === "results" ? state.accountEmail : undefined
+  const scanDate =
+    state.status === "results" || state.status === "trashing" ? state.scanDate : undefined
   const bucketsSplit =
     state.status === "results" || state.status === "trashing"
       ? state.bucketsSplit
@@ -616,7 +662,7 @@ export default function App() {
         scanResults: {
           mediaItems,
           groups,
-          scanDate: Date.now(),
+          scanDate: scanDate ?? Date.now(),
           totalItems,
           newestCreationTimestamp,
           bucketsSplit,
@@ -627,7 +673,7 @@ export default function App() {
       // All duplicates removed — clear saved results so next open starts fresh
       chrome.storage.local.remove("scanResults")
     }
-  }, [groups, mediaItems, totalItems, bucketsSplit, accountEmailForStorage])
+  }, [groups, mediaItems, totalItems, bucketsSplit, scanDate, accountEmailForStorage])
 
   // Persist selections when they change (only while results are showing)
   useEffect(() => {
@@ -645,6 +691,34 @@ export default function App() {
       },
     })
   }, [selectedGroupIds, keptOverrides, state.status, groups.length])
+
+  useEffect(() => {
+    if (storageChecked) chrome.storage.local.set({ viewPrefs: persistablePrefs(viewPrefs) })
+  }, [viewPrefs, storageChecked])
+
+  // Drop reviewed ids for groups that no longer exist (new scan / trashed), then persist.
+  useEffect(() => {
+    if (!storageChecked || state.status !== "results") return
+    const valid = new Set(groups.map((g) => g.id))
+    const kept = [...reviewedIds].filter((id) => valid.has(id))
+    if (kept.length !== reviewedIds.size) setReviewedIds(new Set(kept))
+    else chrome.storage.local.set({ reviewed: { scanDate: state.scanDate, ids: kept } })
+  }, [reviewedIds, groups, storageChecked, state])
+
+  const shownGroups = useMemo(
+    () => (mediaItems ? applyViewPrefs(groups, mediaItems, viewPrefs, reviewedIds) : groups),
+    [groups, mediaItems, viewPrefs, reviewedIds]
+  )
+
+  // Only groups that are both selected and visible may be trashed.
+  const scopeGroups = useMemo(
+    () => (mediaItems ? trashScope(groups, mediaItems, viewPrefs, reviewedIds) : groups),
+    [groups, mediaItems, viewPrefs, reviewedIds]
+  )
+  const trashableIds = useMemo(
+    () => effectiveSelection(selectedGroupIds, scopeGroups),
+    [selectedGroupIds, scopeGroups]
+  )
 
   // Save settings on change
   useEffect(() => {
@@ -721,7 +795,7 @@ export default function App() {
     const dedupKeys: string[] = []
     const mediaKeysToTrash: string[] = []
     for (const group of state.groups) {
-      if (!selectedGroupIds.has(group.id)) continue
+      if (!trashableIds.has(group.id)) continue
       const keptSet = getKept(group)
       for (const key of group.mediaKeys) {
         if (keptSet.has(key)) continue
@@ -736,11 +810,93 @@ export default function App() {
     if (dedupKeys.length === 0) return
     const fullyTrashedGroups = countFullyTrashedGroups(
       state.groups,
-      selectedGroupIds,
+      trashableIds,
       getKept
     )
-    setTrashConfirm({ dedupKeys, mediaKeysToTrash, fullyTrashedGroups })
-  }, [state, selectedGroupIds, getKept])
+    const unreviewedGroups = [...trashableIds].filter((id) => !reviewedIds.has(id)).length
+    setTrashConfirm({ dedupKeys, mediaKeysToTrash, fullyTrashedGroups, unreviewedGroups })
+  }, [state, trashableIds, reviewedIds, getKept])
+
+  const [backupProgress, setBackupProgress] = useState<[number, number] | null>(null)
+  const handleDownloadBackup = useCallback(async () => {
+    if (!trashConfirm || state.status !== "results") return
+    const items = trashConfirm.mediaKeysToTrash
+      .map((k) => state.mediaItems[k])
+      .filter((i): i is GpdMediaItem => !!i)
+    setBackupProgress([0, items.length])
+    setBackupError(null)
+    try {
+      await buildContactSheets(
+        items,
+        (filename, html) => {
+          const url = URL.createObjectURL(new Blob([html], { type: "text/html" }))
+          const a = document.createElement("a")
+          a.href = url
+          a.download = filename
+          a.click()
+          setTimeout(() => URL.revokeObjectURL(url), 10_000)
+        },
+        (done, total) => setBackupProgress([done, total])
+      )
+    } catch (e) {
+      setBackupError(`Backup sheet failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBackupProgress(null)
+    }
+  }, [trashConfirm, state])
+
+  const [backupError, setBackupError] = useState<string | null>(null)
+  const [videoProgress, setVideoProgress] = useState<[number, number] | null>(null)
+  const handleDownloadVideo = useCallback(async () => {
+    if (!trashConfirm || state.status !== "results") return
+    const trashSet = new Set(trashConfirm.mediaKeysToTrash)
+    const affected = state.groups.filter((g) => g.mediaKeys.some((k) => trashSet.has(k)))
+    setBackupError(null)
+    let dir: any
+    try {
+      // Must be the first await so the click's user activation is still valid.
+      dir = await (window as any).showDirectoryPicker({ mode: "readwrite" })
+    } catch {
+      return // cancelled, or unsupported
+    }
+    setVideoProgress([0, 0])
+    // Practically identical groups add nothing to a video (same frame repeated),
+    // so they are left out. Fingerprints are cached from "Select identical…".
+    let identical = new Set<string>()
+    try {
+      const scan = await scanIdenticalGroups(affected, state.mediaItems)
+      identical = new Set(passingGroupIds(scan, DEFAULT_PIXEL_THRESHOLDS))
+    } catch (e) {
+      console.warn("[GPD] identical check before video failed; including all groups", e)
+    }
+    const clips = buildClips(affected.filter((g) => !identical.has(g.id)), state.mediaItems)
+    if (clips.length === 0) {
+      setVideoProgress(null)
+      setBackupError(
+        identical.size > 0
+          ? `No video needed: all ${identical.size} groups are practically identical.`
+          : "No groups to record."
+      )
+      return
+    }
+    const total = clips.reduce((n, c) => n + c.items.length, 0)
+    setVideoProgress([0, total])
+    try {
+      if (identical.size > 0) setBackupError(`${identical.size} identical groups were left out of the video.`)
+      const r = await writeGroupClips(dir, clips, (d, t) => setVideoProgress([d, t]))
+      const MB = (r.bytes / 1e6).toFixed(1)
+      setBackupError(
+        `Saved ${r.files} of ${clips.length} dated videos (${MB} MB) to the folder. In that folder run: sh set-dates.sh (sets file dates to the originals), then drag them into photos.google.com.` +
+          (r.dated ? "" : " This browser can't embed dates (WebM): dates may be wrong; the filename carries the taken date.") +
+          (identical.size > 0 ? ` ${identical.size} identical groups were left out.` : "")
+      )
+    } catch (e) {
+      console.error("[GPD] video backup failed", e)
+      setBackupError(`Video backup failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setVideoProgress(null)
+    }
+  }, [trashConfirm, state])
 
   const handleTrashConfirmed = useCallback(() => {
     if (!trashConfirm || state.status !== "results") return
@@ -829,7 +985,7 @@ export default function App() {
   const duplicateCount =
     state.status === "results"
       ? groups.reduce((sum, group) => {
-          if (!selectedGroupIds.has(group.id)) return sum
+          if (!trashableIds.has(group.id)) return sum
           const keptSet = keptByGroupId.get(group.id)!
           return sum + group.mediaKeys.filter((k) => !keptSet.has(k)).length
         }, 0)
@@ -940,19 +1096,44 @@ export default function App() {
               duplicateCount={duplicateCount}
               onSelectAll={handleSelectAll}
               onDeselectAll={handleDeselectAll}
+              onSelectIdentical={() => setSafeSelectOpen(true)}
               onTrash={handleTrash}
               onRescan={handleReset}
             />
-            <DuplicateGroups
+            <SafeSelectDialog
+              open={safeSelectOpen}
               groups={state.groups}
+              mediaItems={state.mediaItems}
+              onClose={() => setSafeSelectOpen(false)}
+              onApply={(ids) => setSelectedGroupIds(new Set(ids))}
+            />
+            <ViewControls
+              prefs={viewPrefs}
+              onChange={setViewPrefs}
+              shown={shownGroups.length}
+              total={groups.length}
+              trashScopeCount={scopeGroups.length}
+              scanDate={state.scanDate}
+              reviewedCount={reviewedIds.size}
+              onSelectShown={() => setSelectedGroupIds(new Set(shownGroups.map((g) => g.id)))}
+            />
+            {shownGroups.length === 0 && (
+              <Typography color="text.secondary" sx={{ py: 4, textAlign: "center" }}>
+                No groups match the current filters.
+              </Typography>
+            )}
+            {shownGroups.length > 0 && <DuplicateGroups
+              groups={shownGroups}
               mediaItems={state.mediaItems}
               selectedGroupIds={selectedGroupIds}
               onToggleGroup={handleToggleGroup}
               keptByGroupId={keptByGroupId}
               onToggleKept={handleToggleKept}
               onTrashWholeGroup={handleTrashWholeGroup}
+              reviewedIds={reviewedIds}
+              onToggleReviewed={handleToggleReviewed}
               bucketsSplit={state.bucketsSplit}
-            />
+            />}
           </>
         )}
 
@@ -986,6 +1167,20 @@ export default function App() {
             {trashConfirm?.dedupKeys.length !== 1 ? "s" : ""} to trash? You can
             restore them from the Google Photos trash.
           </DialogContentText>
+          {!!trashConfirm && trashConfirm.unreviewedGroups > 0 && (
+            <DialogContentText sx={{ mt: 2 }} color="warning.main">
+              {trashConfirm.unreviewedGroups.toLocaleString()} of these groups were never reviewed.
+            </DialogContentText>
+          )}
+          <DialogContentText sx={{ mt: 2 }} variant="body2">
+            Optional backups: a thumbnail sheet, or one small time-motion video per group, saved
+            into a folder you choose and dated like the original photos (real-time recording: about 1 s per 4 photos, so filter to a batch first for large cleanups).
+            Drag the folder's files into Google Photos afterwards. Practically identical groups are
+            skipped. Recommended: trash the identical groups first (Select identical…). Keep this tab in front while recording.
+          </DialogContentText>
+          {backupError && (
+            <DialogContentText sx={{ mt: 1 }} color="error">{backupError}</DialogContentText>
+          )}
           {!!trashConfirm?.fullyTrashedGroups && (
             <DialogContentText sx={{ mt: 2 }} color="error">
               {trashConfirm.fullyTrashedGroups} group
@@ -996,8 +1191,19 @@ export default function App() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setTrashConfirm(null)}>Cancel</Button>
+          <Button onClick={handleDownloadVideo} disabled={videoProgress !== null}>
+            {videoProgress
+              ? `Recording ${videoProgress[0]}/${videoProgress[1]}…`
+              : "Save dated videos to folder"}
+          </Button>
+          <Button onClick={handleDownloadBackup} disabled={backupProgress !== null}>
+            {backupProgress
+              ? `Preparing ${backupProgress[0]}/${backupProgress[1]}…`
+              : "Download backup sheet"}
+          </Button>
           <Button
             onClick={handleTrashConfirmed}
+            disabled={backupProgress !== null || videoProgress !== null}
             variant="contained"
             color="error">
             Move to Trash
@@ -1013,7 +1219,9 @@ export default function App() {
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
         message={
           undoData
-            ? `${undoData.count} item${undoData.count !== 1 ? "s" : ""} moved to trash`
+            ? `${undoData.count} item${undoData.count !== 1 ? "s" : ""} moved to trash` +
+              (undoData.skipped ? ` · ${undoData.skipped} skipped (already deleted?)` : "") +
+              (undoData.stoppedEarly ? ` · stopped early: ${undoData.stoppedEarly}` : "")
             : ""
         }
         action={

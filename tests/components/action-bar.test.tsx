@@ -20,6 +20,7 @@ interface Props {
   duplicateCount?: number
   onSelectAll?: () => void
   onDeselectAll?: () => void
+  onSelectIdentical?: () => void
   onTrash?: () => void
   onRescan?: () => void
 }
@@ -31,6 +32,7 @@ function renderActionBar(props: Props = {}) {
     duplicateCount: 6,
     onSelectAll: vi.fn(),
     onDeselectAll: vi.fn(),
+    onSelectIdentical: vi.fn(),
     onTrash: vi.fn(),
     onRescan: vi.fn(),
   }

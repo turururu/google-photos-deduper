@@ -22,6 +22,8 @@ import type { GpdMediaItem, DuplicateGroup } from "../lib/types"
 import { isWholeGroupTrashed } from "../lib/kept-overrides"
 
 const PAGE_SIZE = 30
+const EMPTY_SET: Set<string> = new Set()
+const noopToggleReviewed = () => {}
 
 /**
  * Label a group as "videos", "photos", or "items" depending on the kinds of
@@ -152,6 +154,8 @@ interface DuplicateGroupRowProps {
   onOpenViewer: (group: DuplicateGroup, index: number) => void
   onMouseEnterPhoto: (group: DuplicateGroup, index: number) => void
   onMouseLeavePhoto: () => void
+  isFocused: boolean
+  isReviewed: boolean
 }
 
 const DuplicateGroupRow = memo(function DuplicateGroupRow({
@@ -165,12 +169,23 @@ const DuplicateGroupRow = memo(function DuplicateGroupRow({
   onOpenViewer,
   onMouseEnterPhoto,
   onMouseLeavePhoto,
+  isFocused,
+  isReviewed,
 }: DuplicateGroupRowProps) {
   const allTrashed = isWholeGroupTrashed(keptSet)
+  const rowRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (isFocused) rowRef.current?.scrollIntoView({ block: "nearest" })
+  }, [isFocused])
   return (
     <Paper
+      ref={rowRef}
       variant="outlined"
-      sx={[sxPaperBase, { opacity: isSelected ? 1 : 0.55 }]}>
+      sx={[
+        sxPaperBase,
+        { opacity: isSelected ? 1 : 0.55 },
+        isFocused && { outline: "2px solid", outlineColor: "primary.main" },
+      ]}>
       {/* Group header */}
       <Box
         onClick={() => onToggleGroup(group.id)}
@@ -185,6 +200,9 @@ const DuplicateGroupRow = memo(function DuplicateGroupRow({
         <Typography variant="subtitle2" sx={{ flex: 1 }}>
           {group.mediaKeys.length} {groupItemKind(group, mediaItems)}
         </Typography>
+        {isReviewed && (
+          <Chip label="reviewed" size="small" color="success" variant="outlined" sx={{ mr: 1 }} />
+        )}
         <Chip
           label={`${Math.round(group.similarity * 100)}% similar`}
           size="small"
@@ -343,6 +361,8 @@ interface DuplicateGroupsProps {
   keptByGroupId: Map<string, Set<string>>
   onToggleKept: (group: DuplicateGroup, mediaKey: string) => void
   onTrashWholeGroup: (group: DuplicateGroup) => void
+  reviewedIds?: Set<string>
+  onToggleReviewed?: (groupId: string, value?: boolean) => void
   /**
    * Timestamp buckets split during the scan to keep pairwise comparison
    * bounded. Above zero, results are incomplete and we say so.
@@ -358,6 +378,8 @@ export function DuplicateGroups({
   keptByGroupId,
   onToggleKept,
   onTrashWholeGroup,
+  reviewedIds = EMPTY_SET,
+  onToggleReviewed = noopToggleReviewed,
   bucketsSplit = 0,
 }: DuplicateGroupsProps) {
   // Measure time from first non-empty groups render to commit
@@ -408,7 +430,50 @@ export function DuplicateGroups({
 
   const onOpenViewer = useCallback((group: DuplicateGroup, index: number) => {
     setViewerState({ group, index })
-  }, [])
+    onToggleReviewed(group.id, true)
+  }, [onToggleReviewed])
+
+  // Keyboard review: J/K move between groups, X toggles selection, R toggles reviewed,
+  // V/Enter opens the viewer. Disabled while the viewer is open or a form control has focus.
+  const [focusedIndex, setFocusedIndex] = useState(0)
+  useEffect(() => {
+    setFocusedIndex((i) => Math.min(i, Math.max(0, groups.length - 1)))
+  }, [groups])
+  useEffect(() => {
+    if (viewerState) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      // Leave form controls, buttons, links and any open dialog alone.
+      if (target?.isContentEditable) return
+      if (target?.closest?.('input, textarea, select, button, a, [role="button"], [role="option"], [role="listbox"], [role="combobox"], [role="slider"]')) return
+      if (document.querySelector('[role="dialog"]')) return
+      const group = groups[focusedIndex]
+      switch (e.key.toLowerCase()) {
+        case "j":
+          setFocusedIndex((i) => Math.min(groups.length - 1, i + 1))
+          setVisibleCount((c) => Math.max(c, focusedIndex + 2 + PAGE_SIZE / 2))
+          break
+        case "k":
+          setFocusedIndex((i) => Math.max(0, i - 1))
+          break
+        case "x":
+          if (group) { onToggleGroup(group.id); onToggleReviewed(group.id, true) }
+          break
+        case "r":
+          if (group) onToggleReviewed(group.id)
+          break
+        case "v":
+          if (group) onOpenViewer(group, 0)
+          break
+        default:
+          return
+      }
+      e.preventDefault()
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [viewerState, groups, focusedIndex, onToggleGroup, onToggleReviewed, onOpenViewer])
 
   const onMouseEnterPhoto = useCallback((group: DuplicateGroup, index: number) => {
     hoveredPhotoRef.current = { group, index }
@@ -492,7 +557,7 @@ export function DuplicateGroups({
         </Alert>
       )}
 
-      {groups.slice(0, visibleCount).map((group) => (
+      {groups.slice(0, visibleCount).map((group, rowIndex) => (
         <DuplicateGroupRow
           key={group.id}
           group={group}
@@ -505,6 +570,8 @@ export function DuplicateGroups({
           onOpenViewer={onOpenViewer}
           onMouseEnterPhoto={onMouseEnterPhoto}
           onMouseLeavePhoto={onMouseLeavePhoto}
+          isFocused={rowIndex === focusedIndex}
+          isReviewed={reviewedIds.has(group.id)}
         />
       ))}
 
