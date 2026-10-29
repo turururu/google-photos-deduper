@@ -118,12 +118,17 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
     for (const g of groups) {
       const scores = scan.pairs[g.id]
       if (!scores || final.has(g.id)) continue
+      // Focus on groups at or above the similarity floor: those are the ones expected to match.
+      if (similarityIsReal && g.similarity < minSimilarity - 1e-6) {
+        bump("below similarity floor")
+        continue
+      }
       const opts = { keepOrder, existingKept: keptOverrides[g.id], meta }
       const thresholds = { maxHamming, maxColorMae, maxCellDiff }
       const plan = planGroup(g, mediaItems, scores, thresholds, opts)
       if (!plan) continue
       if (plan.trash.length > 0) {
-        bump(plan.fully || includeMixed ? "below similarity floor" : "mixed group (tick the box to include)")
+        bump("mixed group (tick the box to include)")
         continue
       }
       const ms = explainMisses(g, mediaItems, scores, thresholds, plan, opts)
@@ -134,7 +139,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
     }
     misses.sort((a, b) => (a.score?.cellDiff ?? Infinity) - (b.score?.cellDiff ?? Infinity))
     return { reasons, misses: misses.slice(0, 12) }
-  }, [scan, plans, groups, mediaItems, keepOrder, keptOverrides, meta, maxHamming, maxColorMae, maxCellDiff, includeMixed])
+  }, [scan, plans, groups, mediaItems, keepOrder, keptOverrides, meta, maxHamming, maxColorMae, maxCellDiff, includeMixed, similarityIsReal, minSimilarity])
   const freed = useMemo(
     () => summarizeTrash(plans.flatMap((p) => p.trash.map((t) => mediaItems[t.key]).filter(Boolean))),
     [plans, mediaItems]
@@ -225,7 +230,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
             </Typography>
             {Object.keys(reasons).length > 0 && (
               <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>
-                Why other groups were not selected:{" "}
+                Why other groups were not selected (groups above the similarity floor are analysed; the rest are only counted):{" "}
                 {Object.entries(reasons)
                   .sort((a, b) => b[1] - a[1])
                   .map(([k, n]) => `${k} ${n.toLocaleString()}`)
