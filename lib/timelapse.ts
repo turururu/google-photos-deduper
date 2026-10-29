@@ -207,6 +207,10 @@ export const GROUP_CLIP_FPS = 4;
 export const GROUP_CLIP_BITRATE = 600_000;
 export const MAX_GROUP_CLIP_FRAMES = 4000; // ~17 min of real-time recording
 
+/** Parallel recorders: about half the cores, between 2 and 6. */
+export const clipWorkers = (cores = typeof navigator !== "undefined" ? navigator.hardwareConcurrency || 4 : 4) =>
+  Math.max(2, Math.min(6, Math.floor(cores / 2)));
+
 /** Shell script that sets each file's modified time to the photo's taken date. */
 export function buildTouchScript(stamps: { name: string; taken: number }[]): string {
   const lines = stamps.map(({ name, taken }) => {
@@ -237,8 +241,13 @@ export async function writeGroupClips(
   const used = new Set<string>();
   const stamps: { name: string; taken: number }[] = [];
   let aborted = false;
-  try {
-    for (const clip of clips) {
+  // Recording runs in real time (one frame per 1/fps s), so wall-clock time, not CPU, is the limit:
+  // several recorders in parallel finish proportionally sooner.
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    while (!failed && next < clips.length) {
+      const clip = clips[next++];
       signal?.throwIfAborted();
       const taken = clip.items[0].timestamp || Date.now();
       const { blob, ext } = await renderTimelapse([clip], undefined, signal, {
@@ -247,6 +256,7 @@ export async function writeGroupClips(
       });
       const data = new Uint8Array(await blob.arrayBuffer());
       if (ext !== "mp4" || !patchMp4Dates(data, taken)) dated = false;
+      // Claim the file name in one synchronous step so parallel workers never collide.
       let stem = clipFileStem(taken);
       for (let n = 2; used.has(stem); n++) stem = `${clipFileStem(taken)}_${n}`;
       used.add(stem);
@@ -259,6 +269,19 @@ export async function writeGroupClips(
       done += clip.items.length;
       onProgress?.(done, total);
     }
+  };
+  try {
+    // Wait for every worker, so the date script below lists every file that was written.
+    const results = await Promise.allSettled(
+      Array.from({ length: Math.min(clipWorkers(), clips.length) }, () =>
+        worker().catch((e) => {
+          failed = true;
+          throw e;
+        }),
+      ),
+    );
+    const bad = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (bad) throw bad.reason;
   } catch (e) {
     // A user cancel is a normal stop: keep what was saved so far.
     if (!signal?.aborted) throw e;
