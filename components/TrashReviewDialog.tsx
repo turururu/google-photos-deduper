@@ -39,7 +39,7 @@ const LABEL: Record<ReviewStatus, { text: string; color: "success" | "warning" |
 const MAX_ROWS = 200
 const pct = (x: number, digits = 1) => `${(x * 100).toFixed(digits)}%`
 
-function Side({ item, role }: { item?: GpdMediaItem; role: "trash" | "stay" }) {
+function Side({ item, role, empty = "nothing" }: { item?: GpdMediaItem; role: "trash" | "stay"; empty?: string }) {
   const color = role === "trash" ? "error.main" : "success.main"
   return (
     <Box sx={{ width: 120 }}>
@@ -63,7 +63,7 @@ function Side({ item, role }: { item?: GpdMediaItem; role: "trash" | "stay" }) {
         </>
       ) : (
         <Box sx={{ height: 116, display: "flex", alignItems: "center" }}>
-          <Typography variant="caption" color="error">nothing</Typography>
+          <Typography variant="caption" color="error">{empty}</Typography>
         </Box>
       )}
     </Box>
@@ -96,6 +96,7 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
     })().catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
     return () => {
       cancelled = true
+      setEmbeddings(null) // release the vectors when the dialog closes
     }
     // groups are read once per open
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -105,7 +106,22 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
     () => reviewTrash(groups, mediaItems, keptOf, trashSet, embeddings, { minSimilarity, maxResDiff }),
     [groups, mediaItems, keptOf, trashSet, embeddings, minSimilarity, maxResDiff]
   )
-  const shown = review.rows.filter((r) => filter === "all" || r.status !== "matched")
+  // Candidates: least similar first (never compared at the very top).
+  const shown = review.rows
+    .filter((r) => filter === "all" || r.status !== "matched")
+    .sort((a, b) => filter === "all" ? 0 : (a.similarity ?? -1) - (b.similarity ?? -1))
+  const spread = useMemo(() => {
+    const bins = { "≥99%": 0, "98–99%": 0, "97–98%": 0, "<97%": 0, "not compared": 0 }
+    for (const r of review.rows) {
+      const s = r.similarity
+      if (s === undefined) bins["not compared"]++
+      else if (s >= 0.99) bins["≥99%"]++
+      else if (s >= 0.98) bins["98–99%"]++
+      else if (s >= 0.97) bins["97–98%"]++
+      else bins["<97%"]++
+    }
+    return Object.entries(bins).filter(([, n]) => n > 0).map(([k, n]) => `${k}: ${n.toLocaleString()}`).join(" · ")
+  }, [review])
   const binKeys = review.rows.map((r) => r.key)
   const matchedKeys = review.rows.filter((r) => r.status === "matched").map((r) => r.key)
   const loading = !embeddings && !error
@@ -124,6 +140,7 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
           {review.counts["no-keeper"] > 0 && `, ${review.counts["no-keeper"].toLocaleString()} with no copy staying`}
           {review.counts.conflict > 0 && `, ${review.counts.conflict.toLocaleString()} kept by another group (blocked)`}.
         </Typography>
+        {!loading && <Typography variant="caption" color="text.secondary" component="div">Similarity to the closest photo that stays — {spread}</Typography>}
         <Typography variant="caption" component="div">Close match = at least {pct(minSimilarity)} similar</Typography>
         <Slider size="small" min={0.9} max={1} step={0.005} value={minSimilarity}
           onChange={(_, v) => setMinSimilarity(v as number)} />
@@ -140,21 +157,22 @@ export function TrashReviewDialog({ open, groups, mediaItems, keptOf, trashSet, 
             <Box key={`${r.groupId}:${r.key}`} sx={{ display: "flex", alignItems: "center", gap: 1.5, py: 1, borderTop: 1, borderColor: "divider" }}>
               <Side item={mediaItems[r.key]} role="trash" />
               <Typography>→</Typography>
-              <Side item={r.keeperKey ? mediaItems[r.keeperKey] : undefined} role="stay" />
+              <Side
+                item={r.keeperKey ? mediaItems[r.keeperKey] : undefined}
+                role="stay"
+                empty={r.status === "conflict" ? "this photo is kept by another group" : "no photo stays"}
+              />
               <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, alignItems: "flex-start" }}>
                 <Chip size="small" color={l.color} label={l.text} />
-                {r.similarity !== undefined && (
+                {(r.status === "matched" || r.status === "no-match") && (
                   <Typography variant="caption" color="text.secondary">
-                    {pct(r.similarity)} similar
-                    {r.resDiff !== undefined && ` · resolution ${pct(r.resDiff)} apart`}
-                    {r.resDiff === undefined && " · resolution unknown"}
+                    {r.similarity === undefined ? "not compared: no embedding" : `${pct(r.similarity)} similar`}
+                    {r.resDiff === undefined ? " · resolution unknown" : ` · resolution ${pct(r.resDiff)} apart`}
                   </Typography>
                 )}
-                {r.status !== "conflict" && (
-                  <Button size="small" onClick={() => onKeepOnly(binKeys.filter((k) => k !== r.key))}>
-                    Keep this one (don't trash)
-                  </Button>
-                )}
+                <Button size="small" onClick={() => onKeepOnly(binKeys.filter((k) => k !== r.key))}>
+                  {r.status === "conflict" ? "Keep it (fixes the conflict)" : "Keep this one (don't trash)"}
+                </Button>
               </Box>
             </Box>
           )
