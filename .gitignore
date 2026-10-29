@@ -45,3 +45,6 @@ docs/
 # Local Chrome Debug Profiles
 .chrome-profile/
 
+
+# Stable Chrome-importable build (copied from build/chrome-mv3-prod)
+import-build/
