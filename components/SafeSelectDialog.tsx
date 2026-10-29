@@ -6,12 +6,14 @@ import DialogActions from "@mui/material/DialogActions"
 import DialogContent from "@mui/material/DialogContent"
 import DialogTitle from "@mui/material/DialogTitle"
 import LinearProgress from "@mui/material/LinearProgress"
+import Checkbox from "@mui/material/Checkbox"
+import FormControlLabel from "@mui/material/FormControlLabel"
 import Slider from "@mui/material/Slider"
 import Typography from "@mui/material/Typography"
 import { buildThumbUrl } from "../lib/photo-url"
 import { scanIdenticalGroups, type IdenticalScan } from "../lib/identical-scan"
 import { summarizeTrash } from "../lib/trash-summary"
-import { planAll, type GroupPlan } from "../lib/identical-plan"
+import { planAll, filterPlans, type GroupPlan } from "../lib/identical-plan"
 import type { KeepOrder } from "../lib/duplicate-detector"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
 import type { DuplicateGroup, GpdMediaItem } from "../lib/types"
@@ -53,6 +55,13 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
   const [maxHamming, setMaxHamming] = useState(DEFAULT_PIXEL_THRESHOLDS.maxHamming)
   const [maxColorMae, setMaxColorMae] = useState(DEFAULT_PIXEL_THRESHOLDS.maxColorMae)
   const [maxCellDiff, setMaxCellDiff] = useState(DEFAULT_PIXEL_THRESHOLDS.maxCellDiff)
+  const [includeMixed, setIncludeMixed] = useState(false)
+  const [minSimilarity, setMinSimilarity] = useState(0.99)
+  // Scans from before real similarity was stored give every group the same value.
+  const similarityIsReal = useMemo(
+    () => new Set(groups.map((g) => g.similarity.toFixed(4))).size > 1,
+    [groups]
+  )
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -74,7 +83,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  const plans = useMemo(
+  const allPlans = useMemo(
     () =>
       scan
         ? planAll(groups, mediaItems, scan, { maxHamming, maxColorMae, maxCellDiff }, { keepOrder, keptOverrides })
@@ -83,8 +92,13 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder]
   )
+  const plans = useMemo(
+    () => filterPlans(allPlans, groups, { includeMixed, minSimilarity: similarityIsReal ? minSimilarity : null }),
+    [allPlans, groups, includeMixed, minSimilarity, similarityIsReal]
+  )
   const fullyCount = plans.filter((p) => p.fully).length
   const mixedCount = plans.length - fullyCount
+  const hiddenCount = allPlans.length - plans.length
   const freed = useMemo(
     () => summarizeTrash(plans.flatMap((p) => p.trash.map((t) => mediaItems[t.key]).filter(Boolean))),
     [plans, mediaItems]
@@ -117,13 +131,31 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
         )}
         {scan && (
           <>
-            <Typography variant="body2" sx={{ mb: 2 }}>
-              Each photo is compared with the photos that stay, within each group (taken within 2 s, same
-              shape, no videos, favorites never trashed). <strong>{fullyCount.toLocaleString()}</strong> groups are
-              fully identical, <strong>{mixedCount.toLocaleString()}</strong> are mixed (identical copies are
-              selected, the different photos stay). <strong>{trashCount.toLocaleString()}</strong> photos would
-              go to trash, freeing about {(freed.bytes / 1e9).toFixed(2)} GB ({freed.known.toLocaleString()} of {freed.items.toLocaleString()} with known size; photos that don't count toward quota free nothing). Safety rests on this pixel check alone, not on the group similarity.
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              Selects groups where every extra photo is practically identical to the photo that stays
+              (taken within 2 s, same shape, no videos; favorites never trashed).{" "}
+              <strong>{fullyCount.toLocaleString()}</strong> groups
+              {includeMixed && <>, plus <strong>{mixedCount.toLocaleString()}</strong> mixed groups (only the identical copies are selected)</>}
+              {" "}— <strong>{trashCount.toLocaleString()}</strong> photos would go to trash, freeing about{" "}
+              {(freed.bytes / 1e9).toFixed(2)} GB ({freed.known.toLocaleString()} of {freed.items.toLocaleString()} with
+              known size; photos that don't count toward quota free nothing).
+              {hiddenCount > 0 && <> {hiddenCount.toLocaleString()} more groups are hidden by the options below.</>}
             </Typography>
+            <FormControlLabel
+              control={<Checkbox size="small" checked={includeMixed} onChange={(e) => setIncludeMixed(e.target.checked)} />}
+              label="Also pick identical copies inside mixed groups (the different photos stay)"
+            />
+            {similarityIsReal ? (
+              <>
+                <Typography variant="caption" component="div">Minimum group similarity: {Math.round(minSimilarity * 1000) / 10}%</Typography>
+                <Slider size="small" min={0.9} max={1} step={0.005} value={minSimilarity}
+                  onChange={(_, v) => setMinSimilarity(v as number)} />
+              </>
+            ) : (
+              <Typography variant="caption" color="warning.main" component="div">
+                These groups have no real similarity value (older scan): rescan to enable the similarity floor.
+              </Typography>
+            )}
             {Object.keys(scan.skipped).length > 0 && (
               <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 2 }}>
                 Groups not compared:{" "}
@@ -166,6 +198,11 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
         )}
       </DialogContent>
       <DialogActions>
+        <Button size="small" disabled={!scan}
+          onClick={() => navigator.clipboard.writeText(JSON.stringify(
+            allPlans.slice(0, 30).map((p) => ({ ...p, similarity: groups.find((g) => g.id === p.groupId)?.similarity })), null, 1))}>
+          Copy debug data
+        </Button>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="contained" disabled={!scan || plans.length === 0}
           onClick={() => { onApply(plans); onClose() }}>

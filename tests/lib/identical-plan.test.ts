@@ -79,3 +79,20 @@ describe("applyPlans", () => {
     expect([...r.kept.G].sort()).toEqual(["k1", "k2"])
   })
 })
+
+import { filterPlans } from "../../lib/identical-plan"
+describe("filterPlans", () => {
+  const plan = (groupId: string, fully: boolean) => ({ groupId, kept: ["k"], trash: [], fully })
+  const groups = [
+    { id: "hi", mediaKeys: [], originalMediaKey: "", similarity: 0.998 },
+    { id: "lo", mediaKeys: [], originalMediaKey: "", similarity: 0.7 },
+    { id: "mix", mediaKeys: [], originalMediaKey: "", similarity: 0.998 },
+  ]
+  const plans = [plan("hi", true), plan("lo", true), plan("mix", false)]
+  it("drops mixed plans and low-similarity groups by default", () => {
+    expect(filterPlans(plans, groups, { includeMixed: false, minSimilarity: 0.99 }).map((p) => p.groupId)).toEqual(["hi"])
+  })
+  it("includes mixed on request and can disable the floor", () => {
+    expect(filterPlans(plans, groups, { includeMixed: true, minSimilarity: null }).map((p) => p.groupId)).toEqual(["hi", "lo", "mix"])
+  })
+})

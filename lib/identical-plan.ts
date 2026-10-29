@@ -121,3 +121,22 @@ export function applyPlans(
   }
   return { selected: nextSel, kept: nextKept }
 }
+
+
+/**
+ * Conservative defaults: whole-group matches only, from groups whose overall
+ * similarity clears the floor. `minSimilarity` null = floor disabled (scans
+ * made before real similarity was stored all share one fake value).
+ */
+export function filterPlans(
+  plans: GroupPlan[],
+  groups: DuplicateGroup[],
+  opts: { includeMixed: boolean; minSimilarity: number | null },
+): GroupPlan[] {
+  const sim = new Map(groups.map((g) => [g.id, g.similarity]));
+  return plans.filter((p) => {
+    if (!opts.includeMixed && !p.fully) return false;
+    if (opts.minSimilarity !== null && (sim.get(p.groupId) ?? 0) < opts.minSimilarity - 1e-6) return false;
+    return true;
+  });
+}
