@@ -21,6 +21,9 @@ import type { DuplicateGroup, GpdMediaItem } from "../lib/types"
 import { useBlobUrl } from "./useBlobUrl"
 
 const SAMPLE_SIZE = 24
+// Real group similarities mostly sit at 87-91%, so a high floor excludes nearly everything;
+// the pixel check is the real gate. The slider's lowest position means "off".
+const FLOOR_OFF = 0.8
 const TIME_STEPS = [2, 5, 10, 30, 60, 300, 3600, 86400] // seconds
 const timeLabel = (s: number) => (s < 60 ? `${s} s` : s < 3600 ? `${s / 60} min` : s < 86400 ? `${s / 3600} h` : "1 day")
 
@@ -64,7 +67,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
   const [copyMsg, setCopyMsg] = useState<string | null>(null)
   const [replaceSelection, setReplaceSelection] = useState(true)
   const [includeMixed, setIncludeMixed] = useState(false)
-  const [minSimilarity, setMinSimilarity] = useState(0.99)
+  const [minSimilarity, setMinSimilarity] = useState(FLOOR_OFF)
   // Scans from before real similarity was stored give every group the same value.
   const similarityIsReal = useMemo(
     () => new Set(allGroups.map((g) => g.similarity.toFixed(4))).size > 1,
@@ -102,7 +105,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
     [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder, meta]
   )
   const plans = useMemo(
-    () => filterPlans(allPlans, groups, { includeMixed, minSimilarity: similarityIsReal ? minSimilarity : null }),
+    () => filterPlans(allPlans, groups, { includeMixed, minSimilarity: similarityIsReal && minSimilarity > FLOOR_OFF ? minSimilarity : null }),
     [allPlans, groups, includeMixed, minSimilarity, similarityIsReal]
   )
   const fullyCount = plans.filter((p) => p.fully).length
@@ -119,7 +122,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
       const scores = scan.pairs[g.id]
       if (!scores || final.has(g.id)) continue
       // Focus on groups at or above the similarity floor: those are the ones expected to match.
-      if (similarityIsReal && g.similarity < minSimilarity - 1e-6) {
+      if (similarityIsReal && minSimilarity > FLOOR_OFF && g.similarity < minSimilarity - 1e-6) {
         bump("below similarity floor")
         continue
       }
@@ -192,8 +195,8 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
             />
             {similarityIsReal ? (
               <>
-                <Typography variant="caption" component="div">Minimum group similarity: {Math.round(minSimilarity * 1000) / 10}%</Typography>
-                <Slider size="small" min={0.9} max={1} step={0.005} value={minSimilarity}
+                <Typography variant="caption" component="div">Minimum group similarity: {minSimilarity > FLOOR_OFF ? `${Math.round(minSimilarity * 1000) / 10}%` : "off"} (most groups are 87–91%; the pixel check decides)</Typography>
+                <Slider size="small" min={FLOOR_OFF} max={1} step={0.01} value={minSimilarity}
                   onChange={(_, v) => setMinSimilarity(v as number)} />
               </>
             ) : (
