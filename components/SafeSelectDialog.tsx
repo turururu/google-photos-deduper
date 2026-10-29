@@ -21,9 +21,9 @@ import type { DuplicateGroup, GpdMediaItem } from "../lib/types"
 import { Thumb } from "./Thumb"
 
 const SAMPLE_SIZE = 24
-const TIME_STEPS = [2, 5, 10, 30, 60, 300, 3600, 86400] // seconds
+const TIME_STEPS = [2, 5, 10, 30, 60, 300, 3600, 86400, Infinity] // seconds; Infinity = ignore time
 const stepForWindow = (sec = 0) => Math.max(0, TIME_STEPS.findIndex((t) => t >= sec))
-const timeLabel = (s: number) => (s < 60 ? `${s} s` : s < 3600 ? `${s / 60} min` : s < 86400 ? `${s / 3600} h` : "1 day")
+const timeLabel = (s: number) => (s === Infinity ? "no limit" : s < 60 ? `${s} s` : s < 3600 ? `${s / 60} min` : s < 86400 ? `${s / 3600} h` : "1 day")
 
 interface Props {
   open: boolean
@@ -205,7 +205,7 @@ export function SafeSelectDialog({ open, scanWindowSec, groups, mediaItems, keep
               </Typography>
             )}
             <Typography variant="caption" component="div">
-              Max time between two photos: {timeLabel(TIME_STEPS[timeStep])} (starts at the scan's window; raise only if copies lost their date)
+              Max time between two photos: {timeLabel(TIME_STEPS[timeStep])} (starts at the scan's window; slide right to ignore time. Photos with no taken time never match)
             </Typography>
             <Slider size="small" min={0} max={TIME_STEPS.length - 1} step={1} value={timeStep}
               onChange={(_, v) => setTimeStep(v as number)} />
