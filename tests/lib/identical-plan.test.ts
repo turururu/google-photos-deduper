@@ -81,7 +81,7 @@ describe("applyPlans", () => {
   })
 })
 
-import { filterPlans } from "../../lib/identical-plan"
+import { filterPlans, effectiveFloor, FLOOR_OFF } from "../../lib/identical-plan"
 describe("filterPlans", () => {
   const plan = (groupId: string, fully: boolean) => ({ groupId, kept: ["k"], trash: [], fully })
   const groups = [
@@ -95,6 +95,22 @@ describe("filterPlans", () => {
   })
   it("includes mixed on request and can disable the floor", () => {
     expect(filterPlans(plans, groups, { includeMixed: true, minSimilarity: null }).map((p) => p.groupId)).toEqual(["hi", "lo", "mix"])
+  })
+})
+
+describe("floor off still protects mixed low-similarity groups", () => {
+  it("one identical pair among different photos is excluded without includeMixed", () => {
+    const its = items([mk("a"), mk("b"), mk("c"), mk("d")])
+    const g = { ...grp(["a", "b", "c", "d"]), similarity: 0.7 }
+    const sc = [same("a", "b"), diff("a", "c"), diff("a", "d"), diff("b", "c"), diff("b", "d"), diff("c", "d")]
+    const plan = planGroup(g, its, sc, T, opts)!
+    expect(plan.fully).toBe(false)
+    expect(filterPlans([plan], [g], { includeMixed: false, minSimilarity: effectiveFloor(0.8, true) })).toEqual([])
+  })
+  it("effectiveFloor is null when off or similarities are fake", () => {
+    expect(effectiveFloor(FLOOR_OFF, true)).toBeNull()
+    expect(effectiveFloor(0.95, false)).toBeNull()
+    expect(effectiveFloor(0.95, true)).toBe(0.95)
   })
 })
 

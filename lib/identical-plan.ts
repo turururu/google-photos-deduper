@@ -133,6 +133,17 @@ export function applyPlans(
  * similarity clears the floor. `minSimilarity` null = floor disabled (scans
  * made before real similarity was stored all share one fake value).
  */
+/** Slider position at or below which the group-similarity floor is off. */
+export const FLOOR_OFF = 0.8;
+
+/** The floor to apply, or null when off or when similarities are not real (old scans). */
+export function effectiveFloor(minSimilarity: number, similarityIsReal: boolean): number | null {
+  return similarityIsReal && minSimilarity > FLOOR_OFF ? minSimilarity : null;
+}
+
+export const belowFloor = (similarity: number, floor: number | null): boolean =>
+  floor !== null && similarity < floor - 1e-6;
+
 export function filterPlans(
   plans: GroupPlan[],
   groups: DuplicateGroup[],
@@ -141,7 +152,7 @@ export function filterPlans(
   const sim = new Map(groups.map((g) => [g.id, g.similarity]));
   return plans.filter((p) => {
     if (!opts.includeMixed && !p.fully) return false;
-    if (opts.minSimilarity !== null && (sim.get(p.groupId) ?? 0) < opts.minSimilarity - 1e-6) return false;
+    if (belowFloor(sim.get(p.groupId) ?? 0, opts.minSimilarity)) return false;
     return true;
   });
 }

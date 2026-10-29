@@ -13,7 +13,7 @@ import Typography from "@mui/material/Typography"
 import { buildThumbUrl } from "../lib/photo-url"
 import { scanIdenticalGroups, type IdenticalScan } from "../lib/identical-scan"
 import { summarizeTrash } from "../lib/trash-summary"
-import { planAll, planGroup, explainMisses, filterPlans, type GroupPlan, type Miss } from "../lib/identical-plan"
+import { planAll, planGroup, explainMisses, filterPlans, effectiveFloor, belowFloor, FLOOR_OFF, type GroupPlan, type Miss } from "../lib/identical-plan"
 import { DEFAULT_NEAR_EXACT } from "../lib/near-exact"
 import type { KeepOrder } from "../lib/duplicate-detector"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
@@ -21,9 +21,6 @@ import type { DuplicateGroup, GpdMediaItem } from "../lib/types"
 import { useBlobUrl } from "./useBlobUrl"
 
 const SAMPLE_SIZE = 24
-// Real group similarities mostly sit at 87-91%, so a high floor excludes nearly everything;
-// the pixel check is the real gate. The slider's lowest position means "off".
-const FLOOR_OFF = 0.8
 const TIME_STEPS = [2, 5, 10, 30, 60, 300, 3600, 86400] // seconds
 const timeLabel = (s: number) => (s < 60 ? `${s} s` : s < 3600 ? `${s / 60} min` : s < 86400 ? `${s / 3600} h` : "1 day")
 
@@ -104,9 +101,10 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder, meta]
   )
+  const floor = effectiveFloor(minSimilarity, similarityIsReal)
   const plans = useMemo(
-    () => filterPlans(allPlans, groups, { includeMixed, minSimilarity: similarityIsReal && minSimilarity > FLOOR_OFF ? minSimilarity : null }),
-    [allPlans, groups, includeMixed, minSimilarity, similarityIsReal]
+    () => filterPlans(allPlans, groups, { includeMixed, minSimilarity: floor }),
+    [allPlans, groups, includeMixed, floor]
   )
   const fullyCount = plans.filter((p) => p.fully).length
   const mixedCount = plans.length - fullyCount
@@ -122,7 +120,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
       const scores = scan.pairs[g.id]
       if (!scores || final.has(g.id)) continue
       // Focus on groups at or above the similarity floor: those are the ones expected to match.
-      if (similarityIsReal && minSimilarity > FLOOR_OFF && g.similarity < minSimilarity - 1e-6) {
+      if (belowFloor(g.similarity, floor)) {
         bump("below similarity floor")
         continue
       }
@@ -142,7 +140,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
     }
     misses.sort((a, b) => (a.score?.cellDiff ?? Infinity) - (b.score?.cellDiff ?? Infinity))
     return { reasons, misses: misses.slice(0, 12) }
-  }, [scan, plans, groups, mediaItems, keepOrder, keptOverrides, meta, maxHamming, maxColorMae, maxCellDiff, includeMixed, similarityIsReal, minSimilarity])
+  }, [scan, plans, groups, mediaItems, keepOrder, keptOverrides, meta, maxHamming, maxColorMae, maxCellDiff, includeMixed, floor])
   const freed = useMemo(
     () => summarizeTrash(plans.flatMap((p) => p.trash.map((t) => mediaItems[t.key]).filter(Boolean))),
     [plans, mediaItems]
@@ -196,7 +194,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
             {similarityIsReal ? (
               <>
                 <Typography variant="caption" component="div">Minimum group similarity: {minSimilarity > FLOOR_OFF ? `${Math.round(minSimilarity * 1000) / 10}%` : "off"} (most groups are 87–91%; the pixel check decides)</Typography>
-                <Slider size="small" min={FLOOR_OFF} max={1} step={0.01} value={minSimilarity}
+                <Slider size="small" min={FLOOR_OFF} max={1} step={0.005} value={minSimilarity}
                   onChange={(_, v) => setMinSimilarity(v as number)} />
               </>
             ) : (
