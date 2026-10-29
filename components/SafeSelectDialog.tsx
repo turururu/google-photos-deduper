@@ -42,7 +42,7 @@ interface Props {
   keepOrder: KeepOrder
   keptOverrides: Record<string, Set<string>>
   /** Adds these groups to the selection and fixes each one's kept set. */
-  onApply: (plans: GroupPlan[]) => void
+  onApply: (plans: GroupPlan[], replace: boolean) => void
 }
 
 /**
@@ -58,6 +58,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
   const [maxColorMae, setMaxColorMae] = useState(DEFAULT_PIXEL_THRESHOLDS.maxColorMae)
   const [maxCellDiff, setMaxCellDiff] = useState(DEFAULT_PIXEL_THRESHOLDS.maxCellDiff)
   const [copyMsg, setCopyMsg] = useState<string | null>(null)
+  const [replaceSelection, setReplaceSelection] = useState(true)
   const [includeMixed, setIncludeMixed] = useState(false)
   const [minSimilarity, setMinSimilarity] = useState(0.99)
   // Scans from before real similarity was stored give every group the same value.
@@ -145,6 +146,10 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
               {hiddenCount > 0 && <> {hiddenCount.toLocaleString()} more groups are hidden by the options below.</>}
             </Typography>
             <FormControlLabel
+              control={<Checkbox size="small" checked={replaceSelection} onChange={(e) => setReplaceSelection(e.target.checked)} />}
+              label="Replace the current selection (unmarks every other group, including old marks)"
+            />
+            <FormControlLabel
               control={<Checkbox size="small" checked={includeMixed} onChange={(e) => setIncludeMixed(e.target.checked)} />}
               label="Also pick identical copies inside mixed groups (the different photos stay)"
             />
@@ -225,7 +230,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
         </Button>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="contained" disabled={!scan || plans.length === 0}
-          onClick={() => { onApply(plans); onClose() }}>
+          onClick={() => { onApply(plans, replaceSelection); onClose() }}>
           Select {plans.length.toLocaleString()} groups ({trashCount.toLocaleString()} photos)
         </Button>
       </DialogActions>

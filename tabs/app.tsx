@@ -1282,12 +1282,12 @@ export default function App() {
               keepOrder={keepOrder}
               keptOverrides={keptOverrides}
               onClose={() => setSafeSelectOpen(false)}
-              onApply={(plans) => {
-                const r = applyPlans(selectedGroupIds, keptOverrides, plans)
+              onApply={(plans, replace) => {
+                const r = applyPlans(selectedGroupIds, keptOverrides, plans, { replace })
                 setSelectedGroupIds(r.selected)
                 setKeptOverrides(r.kept)
                 setIdenticalNotes((prev) => ({
-                  ...prev,
+                  ...(replace ? {} : prev),
                   ...Object.fromEntries(
                     plans.map((p) => [p.groupId, `identical: ${p.trash.length} trashed, ${p.kept.length} kept`])
                   ),

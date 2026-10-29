@@ -107,13 +107,16 @@ export function provenIdentical(
   return proven;
 }
 
-/** Merge plans into the current selection: never deselects a group or drops a kept photo. */
+/** Merge plans into the selection (or replace it); never drops a kept photo. */
 export function applyPlans(
   selected: Set<string>,
   kept: Record<string, Set<string>>,
   plans: GroupPlan[],
+  opts: { replace?: boolean } = {},
 ): { selected: Set<string>; kept: Record<string, Set<string>> } {
-  const nextSel = new Set(selected)
+  // replace: the result becomes the whole selection (stale marks are dropped);
+  // kept sets are still only ever widened.
+  const nextSel = new Set(opts.replace ? [] : selected)
   const nextKept = { ...kept }
   for (const p of plans) {
     nextSel.add(p.groupId)

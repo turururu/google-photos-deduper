@@ -96,3 +96,11 @@ describe("filterPlans", () => {
     expect(filterPlans(plans, groups, { includeMixed: true, minSimilarity: null }).map((p) => p.groupId)).toEqual(["hi", "lo", "mix"])
   })
 })
+
+describe("applyPlans replace", () => {
+  it("drops stale marks but keeps kept photos", () => {
+    const r = applyPlans(new Set(["X", "G"]), { G: new Set(["k1"]) }, [{ groupId: "G", kept: ["k2"], trash: [], fully: true }], { replace: true })
+    expect([...r.selected]).toEqual(["G"])
+    expect([...r.kept.G].sort()).toEqual(["k1", "k2"])
+  })
+})
