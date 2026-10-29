@@ -10,6 +10,7 @@ import Slider from "@mui/material/Slider"
 import Typography from "@mui/material/Typography"
 import { buildThumbUrl } from "../lib/photo-url"
 import { scanIdenticalGroups, type IdenticalScan } from "../lib/identical-scan"
+import { summarizeTrash } from "../lib/trash-summary"
 import { planAll, type GroupPlan } from "../lib/identical-plan"
 import type { KeepOrder } from "../lib/duplicate-detector"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
@@ -84,6 +85,10 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
   )
   const fullyCount = plans.filter((p) => p.fully).length
   const mixedCount = plans.length - fullyCount
+  const freed = useMemo(
+    () => summarizeTrash(plans.flatMap((p) => p.trash.map((t) => mediaItems[t.key]).filter(Boolean))),
+    [plans, mediaItems]
+  )
   const trashCount = plans.reduce((n, p) => n + p.trash.length, 0)
 
   // Loosest matches first: if those look identical, stricter ones are too.
@@ -117,7 +122,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOver
               shape, no videos, favorites never trashed). <strong>{fullyCount.toLocaleString()}</strong> groups are
               fully identical, <strong>{mixedCount.toLocaleString()}</strong> are mixed (identical copies are
               selected, the different photos stay). <strong>{trashCount.toLocaleString()}</strong> photos would
-              go to trash. Safety rests on this pixel check alone, not on the group similarity.
+              go to trash, freeing about {(freed.bytes / 1e9).toFixed(2)} GB ({freed.known.toLocaleString()} of {freed.items.toLocaleString()} with known size; photos that don't count toward quota free nothing). Safety rests on this pixel check alone, not on the group similarity.
             </Typography>
             {Object.keys(scan.skipped).length > 0 && (
               <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 2 }}>

@@ -1000,8 +1000,12 @@ export default function App() {
       videoAbortRef.current = ctrl
       const r = await writeGroupClips(dir, clips, (d, t) => setVideoProgress([d, t]), ctrl.signal)
       const MB = (r.bytes / 1e6).toFixed(1)
+      const freedGB = summarizeTrash(
+        trashConfirm.mediaKeysToTrash.map((k) => state.mediaItems[k]).filter((i): i is GpdMediaItem => !!i)
+      ).bytes / 1e9
+      const net = freedGB - r.bytes / 1e9
       setBackupError(
-        `${r.aborted ? "Stopped. " : ""}Saved ${r.files} of ${clips.length} dated videos (${MB} MB) to the folder. In that folder run: sh set-dates.sh (sets file dates to the originals), then drag them into photos.google.com.` +
+        `${r.aborted ? "Stopped. " : ""}Saved ${r.files} of ${clips.length} dated videos (${MB} MB) to the folder. In that folder run: sh set-dates.sh (sets file dates to the originals), then drag them into photos.google.com. Uploading them uses ${MB} MB again: net saving about ${net.toFixed(2)} GB.` +
           (r.dated ? "" : " This browser can't embed dates (WebM): dates may be wrong; the filename carries the taken date.") +
           (provenCount > 0 ? ` ${provenCount} identical photos were left out.` : "")
       )

@@ -91,3 +91,20 @@ describe("selection filter", () => {
     expect(persistablePrefs({ ...BASE, selection: "selected" }).selection).toBe("all")
   })
 })
+
+describe("space-aware view", () => {
+  const sp = (k: string, o: Partial<GpdMediaItem>) => ({ ...items[k], ...o })
+  const m = {
+    ...items,
+    a1: sp("a1", { spaceTaken: 5e6, takesUpSpace: true }), a2: sp("a2", { spaceTaken: 0, takesUpSpace: false }),
+    c1: sp("c1", { spaceTaken: 3e6, takesUpSpace: true }), c2: sp("c2", { spaceTaken: 2e6, takesUpSpace: true }),
+    b1: sp("b1", {}), b2: sp("b2", {}), b3: sp("b3", {}),
+  }
+  const run = (p = {}) => applyViewPrefs(groups, m, { ...BASE, ...p }).map((g) => g.id)
+  it("sorts by quota freed, known sizes first", () =>
+    expect(run({ sort: "removable-desc" })).toEqual(["C", "A", "B"]))
+  it("freesSpace hides groups that free nothing", () => {
+    expect(run({ freesSpace: true })).not.toContain("A")
+    expect(run({ freesSpace: true })).toContain("B") // unknown sizes stay visible
+  })
+})

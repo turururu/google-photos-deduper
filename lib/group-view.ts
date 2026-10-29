@@ -1,3 +1,4 @@
+import { freedBytes } from "./trash-summary";
 import type { DuplicateGroup, GpdMediaItem } from "./types";
 
 export type SortKey =
@@ -14,6 +15,8 @@ export interface ViewPrefs {
   maxSimilarity: number; // 0-1
   onlyPairs: boolean;
   noFavorites: boolean;
+  // Hide groups where trashing the extra copies frees no quota.
+  freesSpace: boolean;
   hideReviewed: boolean;
   // Session-only: filter by trash-selection, judged against a snapshot so
   // ticking a group doesn't make it vanish mid-click.
@@ -29,6 +32,7 @@ export const DEFAULT_VIEW_PREFS: ViewPrefs = {
   maxSimilarity: 1,
   onlyPairs: false,
   noFavorites: true,
+  freesSpace: false,
   hideReviewed: false,
   selection: "all",
   takenFrom: "",
@@ -59,6 +63,17 @@ function removablePixels(items: GpdMediaItem[]): number {
   return total - Math.max(0, ...items.map(pixels));
 }
 
+/**
+ * Estimated quota freed if the biggest-cost copy is kept (the usual keep pick)
+ * and the rest trashed. null when any size is unknown.
+ */
+export function estimatedFreed(items: GpdMediaItem[]): number | null {
+  const b = items.map(freedBytes);
+  if (b.some((x) => x === null)) return null;
+  const v = b as number[];
+  return v.reduce((s, x) => s + x, 0) - Math.max(0, ...v);
+}
+
 const takenOf = (items: GpdMediaItem[]) =>
   items.length ? Math.min(...items.map((i) => i.timestamp ?? 0)) : 0;
 
@@ -80,6 +95,7 @@ export function applyViewPrefs(
       if (g.similarity < prefs.minSimilarity - EPS) return false;
       if (g.similarity > prefs.maxSimilarity + EPS) return false;
       if (prefs.onlyPairs && g.mediaKeys.length !== 2) return false;
+      if (prefs.freesSpace && estimatedFreed(items) === 0) return false;
       if (prefs.noFavorites && items.some((i) => i.isFavorite === true)) return false;
       if (prefs.hideReviewed && reviewed?.has(g.id)) return false;
       if (prefs.selection !== "all" && selectedSnapshot) {
@@ -96,7 +112,11 @@ export function applyViewPrefs(
     "similarity-desc": (r) => -r.g.similarity,
     "similarity-asc": (r) => r.g.similarity,
     "size-desc": (r) => -r.g.mediaKeys.length,
-    "removable-desc": (r) => -removablePixels(r.items),
+    // Real quota first (bytes dwarf pixel counts), pixels for groups without sizes.
+    "removable-desc": (r) => {
+      const f = estimatedFreed(r.items);
+      return f === null ? -removablePixels(r.items) : -(1e15 + f);
+    },
     "taken-desc": (r) => -takenOf(r.items),
     "taken-asc": (r) => takenOf(r.items),
   };

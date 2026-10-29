@@ -16,7 +16,7 @@ const SORT_LABELS: Record<SortKey, string> = {
   "similarity-desc": "Most similar first",
   "similarity-asc": "Least similar first",
   "size-desc": "Largest groups first",
-  "removable-desc": "Most to remove first",
+  "removable-desc": "Most space freed first",
   "taken-desc": "Newest photos first",
   "taken-asc": "Oldest photos first",
 }
@@ -116,6 +116,8 @@ export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, s
         {prefs.selection !== "all" && (
           <Button size="small" onClick={onRefreshSelection}>Refresh marked</Button>
         )}
+        <FormControlLabel label="Frees space only" control={
+          <Switch size="small" checked={prefs.freesSpace} onChange={(e) => set({ freesSpace: e.target.checked })} />} />
         <FormControlLabel label="Hide reviewed" control={
           <Switch size="small" checked={prefs.hideReviewed} onChange={(e) => set({ hideReviewed: e.target.checked })} />} />
         <TextField size="small" type="date" label="Taken from" InputLabelProps={{ shrink: true }}

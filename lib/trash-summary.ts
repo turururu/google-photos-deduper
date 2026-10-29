@@ -11,6 +11,13 @@ export interface TrashSummary {
  * so prefer Google's own `spaceTaken`, then file size, and skip when
  * `takesUpSpace` is false.
  */
+/** Bytes trashing this item frees: 0 if it doesn't count, null if unknown. */
+export function freedBytes(i: GpdMediaItem): number | null {
+  if (i.takesUpSpace === false) return 0;
+  const b = i.spaceTaken ?? i.size;
+  return typeof b === "number" ? b : null;
+}
+
 export function summarizeTrash(items: GpdMediaItem[]): TrashSummary {
   let known = 0;
   let bytes = 0;
