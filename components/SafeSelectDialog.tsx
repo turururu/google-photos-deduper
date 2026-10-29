@@ -9,11 +9,9 @@ import LinearProgress from "@mui/material/LinearProgress"
 import Slider from "@mui/material/Slider"
 import Typography from "@mui/material/Typography"
 import { buildThumbUrl } from "../lib/photo-url"
-import {
-  passingGroupIds,
-  scanIdenticalGroups,
-  type IdenticalScan,
-} from "../lib/identical-scan"
+import { scanIdenticalGroups, type IdenticalScan } from "../lib/identical-scan"
+import { planAll, type GroupPlan } from "../lib/identical-plan"
+import type { KeepOrder } from "../lib/duplicate-detector"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
 import type { DuplicateGroup, GpdMediaItem } from "../lib/types"
 import { useBlobUrl } from "./useBlobUrl"
@@ -36,8 +34,10 @@ interface Props {
   groups: DuplicateGroup[]
   mediaItems: Record<string, GpdMediaItem>
   onClose: () => void
-  /** Replaces the current selection with exactly these group ids. */
-  onApply: (groupIds: string[]) => void
+  keepOrder: KeepOrder
+  keptOverrides: Record<string, Set<string>>
+  /** Replaces the selection with these groups and fixes each one's kept set. */
+  onApply: (plans: GroupPlan[]) => void
 }
 
 /**
@@ -45,7 +45,7 @@ interface Props {
  * user tune the strictness while looking at the loosest groups that would
  * pass. Selecting never trashes anything.
  */
-export function SafeSelectDialog({ open, groups, mediaItems, onClose, onApply }: Props) {
+export function SafeSelectDialog({ open, groups, mediaItems, keepOrder, keptOverrides, onClose, onApply }: Props) {
   const [progress, setProgress] = useState<[number, number]>([0, 0])
   const [scan, setScan] = useState<IdenticalScan | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -73,22 +73,28 @@ export function SafeSelectDialog({ open, groups, mediaItems, onClose, onApply }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  const passing = useMemo(
-    () => (scan ? passingGroupIds(scan, { maxHamming, maxColorMae, maxCellDiff }) : []),
-    [scan, maxHamming, maxColorMae, maxCellDiff]
+  const plans = useMemo(
+    () =>
+      scan
+        ? planAll(groups, mediaItems, scan, { maxHamming, maxColorMae, maxCellDiff }, { keepOrder, keptOverrides })
+        : [],
+    // overrides are read once per scan/threshold change; fine while the dialog is open
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scan, maxHamming, maxColorMae, maxCellDiff, keepOrder]
   )
+  const fullyCount = plans.filter((p) => p.fully).length
+  const mixedCount = plans.length - fullyCount
+  const trashCount = plans.reduce((n, p) => n + p.trash.length, 0)
 
-  // Show the loosest passing groups: if those look identical, stricter ones are too.
-  const sample = useMemo(() => {
-    if (!scan) return []
-    const ok = new Set(passing)
-    const byId = new Map(groups.map((g) => [g.id, g]))
-    return scan.scores
-      .filter((s) => ok.has(s.groupId))
-      .sort((a, b) => b.maxCellDiff - a.maxCellDiff)
-      .slice(0, SAMPLE_SIZE)
-      .map((s) => ({ score: s, group: byId.get(s.groupId)! }))
-  }, [scan, passing, groups])
+  // Loosest matches first: if those look identical, stricter ones are too.
+  const sample = useMemo(
+    () =>
+      plans
+        .flatMap((p) => p.trash.map((t) => ({ ...t, groupId: p.groupId })))
+        .sort((a, b) => b.score.cellDiff - a.score.cellDiff)
+        .slice(0, SAMPLE_SIZE),
+    [plans]
+  )
 
   const [done, total] = progress
   return (
@@ -99,7 +105,7 @@ export function SafeSelectDialog({ open, groups, mediaItems, onClose, onApply }:
         {!scan && !error && (
           <Box sx={{ py: 3 }}>
             <Typography variant="body2" gutterBottom>
-              Comparing pixels of candidate groups… {done.toLocaleString()} / {total.toLocaleString()}
+              Comparing pixels within groups… {done.toLocaleString()} / {total.toLocaleString()}
             </Typography>
             <LinearProgress variant={total ? "determinate" : "indeterminate"} value={total ? (done / total) * 100 : 0} />
           </Box>
@@ -107,14 +113,16 @@ export function SafeSelectDialog({ open, groups, mediaItems, onClose, onApply }:
         {scan && (
           <>
             <Typography variant="body2" sx={{ mb: 2 }}>
-              {scan.candidateCount.toLocaleString()} of {groups.length.toLocaleString()} groups
-              passed the metadata check (2–4 photos, taken within 2 s, same shape, no videos). <strong>{passing.length.toLocaleString()}</strong> also match pixel for pixel.
-              Everything else stays for manual review.
+              Each photo is compared with the photos that stay, within each group (taken within 2 s, same
+              shape, no videos, favorites never trashed). <strong>{fullyCount.toLocaleString()}</strong> groups are
+              fully identical, <strong>{mixedCount.toLocaleString()}</strong> are mixed (identical copies are
+              selected, the different photos stay). <strong>{trashCount.toLocaleString()}</strong> photos would
+              go to trash. Safety rests on this pixel check alone, not on the group similarity.
             </Typography>
-            {scan.rejected && Object.keys(scan.rejected).length > 0 && (
+            {Object.keys(scan.skipped).length > 0 && (
               <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 2 }}>
-                Groups failing each metadata rule (a group can fail several):{" "}
-                {Object.entries(scan.rejected)
+                Groups not compared:{" "}
+                {Object.entries(scan.skipped)
                   .sort((a, b) => b[1] - a[1])
                   .map(([k, n]) => `${k} ${n.toLocaleString()}`)
                   .join(" · ")}
@@ -134,16 +142,17 @@ export function SafeSelectDialog({ open, groups, mediaItems, onClose, onApply }:
               trusting this.
             </Typography>
             <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>
-              Loosest {sample.length} groups (by local difference) that would be selected — check none differ:
+              Loosest {sample.length} matches (kept photo left, trashed photo right) — check none differ:
             </Typography>
             <Box sx={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
-              {sample.map(({ group, score }) => (
-                <Box key={group.id} sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 0.5 }}>
+              {sample.map((t) => (
+                <Box key={t.key} sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 0.5 }}>
                   <Box sx={{ display: "flex", gap: 0.5 }}>
-                    {group.mediaKeys.map((k) => mediaItems[k] && <Thumb key={k} item={mediaItems[k]} />)}
+                    {mediaItems[t.keptKey] && <Thumb item={mediaItems[t.keptKey]} />}
+                    {mediaItems[t.key] && <Thumb item={mediaItems[t.key]} />}
                   </Box>
                   <Typography variant="caption" color="text.secondary">
-                    Δ {score.maxHamming} bits · {score.maxColorMae.toFixed(1)} colour · {score.maxCellDiff.toFixed(0)} local
+                    Δ {t.score.hamming} bits · {t.score.colorMae.toFixed(1)} colour · {t.score.cellDiff.toFixed(0)} local
                   </Typography>
                 </Box>
               ))}
@@ -153,9 +162,9 @@ export function SafeSelectDialog({ open, groups, mediaItems, onClose, onApply }:
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={!scan || passing.length === 0}
-          onClick={() => { onApply(passing); onClose() }}>
-          Select only {passing.length.toLocaleString()} identical groups
+        <Button variant="contained" disabled={!scan || plans.length === 0}
+          onClick={() => { onApply(plans); onClose() }}>
+          Select {plans.length.toLocaleString()} groups ({trashCount.toLocaleString()} photos)
         </Button>
       </DialogActions>
     </Dialog>

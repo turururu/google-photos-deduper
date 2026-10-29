@@ -15,6 +15,9 @@ export interface ViewPrefs {
   onlyPairs: boolean;
   noFavorites: boolean;
   hideReviewed: boolean;
+  // Session-only: filter by trash-selection, judged against a snapshot so
+  // ticking a group doesn't make it vanish mid-click.
+  selection: "all" | "selected" | "unselected";
   // Taken-date range as yyyy-mm-dd (local). Deliberately not persisted.
   takenFrom: string;
   takenTo: string;
@@ -27,13 +30,14 @@ export const DEFAULT_VIEW_PREFS: ViewPrefs = {
   onlyPairs: false,
   noFavorites: true,
   hideReviewed: false,
+  selection: "all",
   takenFrom: "",
   takenTo: "",
 };
 
 /** Prefs as stored: the date range is session-only so it can't hide groups after a rescan. */
 export function persistablePrefs(p: ViewPrefs): ViewPrefs {
-  return { ...p, takenFrom: "", takenTo: "" };
+  return { ...p, takenFrom: "", takenTo: "", selection: "all" };
 }
 
 function dayStart(d: string): number {
@@ -66,6 +70,7 @@ export function applyViewPrefs(
   mediaItems: Record<string, GpdMediaItem>,
   prefs: ViewPrefs,
   reviewed?: Set<string>,
+  selectedSnapshot?: Set<string>,
 ): DuplicateGroup[] {
   const from = dayStart(prefs.takenFrom);
   const to = dayEnd(prefs.takenTo);
@@ -77,6 +82,9 @@ export function applyViewPrefs(
       if (prefs.onlyPairs && g.mediaKeys.length !== 2) return false;
       if (prefs.noFavorites && items.some((i) => i.isFavorite === true)) return false;
       if (prefs.hideReviewed && reviewed?.has(g.id)) return false;
+      if (prefs.selection !== "all" && selectedSnapshot) {
+        if (selectedSnapshot.has(g.id) !== (prefs.selection === "selected")) return false;
+      }
       if (from !== -Infinity || to !== Infinity) {
         const t = takenOf(items);
         if (t < from || t > to) return false;
@@ -121,5 +129,6 @@ export function trashScope(
   prefs: ViewPrefs,
   reviewed?: Set<string>,
 ): DuplicateGroup[] {
-  return applyViewPrefs(groups, mediaItems, { ...prefs, hideReviewed: false }, reviewed);
+  // Neither "hide reviewed" nor the selection view may narrow what trash touches.
+  return applyViewPrefs(groups, mediaItems, { ...prefs, hideReviewed: false, selection: "all" }, reviewed);
 }

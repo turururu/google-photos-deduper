@@ -71,3 +71,22 @@ export function isNearExactCandidate(
 ): boolean {
   return nearExactExclusions(items, similarity, opts).length === 0;
 }
+
+/**
+ * Metadata test for one pair: both photos (no video), taken within the window,
+ * same orientation and aspect within tolerance. Used per pair when only part
+ * of a group is identical.
+ */
+export function pairMetadataOk(
+  a: GpdMediaItem,
+  b: GpdMediaItem,
+  opts: NearExactOptions = DEFAULT_NEAR_EXACT,
+): boolean {
+  if (a.duration !== undefined || b.duration !== undefined) return false;
+  if (Math.abs(a.timestamp - b.timestamp) > opts.maxTakenDiffMs) return false;
+  if (!a.resWidth || !a.resHeight || !b.resWidth || !b.resHeight) return false;
+  const ra = a.resWidth / a.resHeight;
+  const rb = b.resWidth / b.resHeight;
+  if (ra >= 1 !== rb >= 1) return false;
+  return Math.abs(ra - rb) / ra <= opts.maxAspectDiff;
+}

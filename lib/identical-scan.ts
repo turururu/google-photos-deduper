@@ -1,6 +1,6 @@
 import type { DuplicateGroup, GpdMediaItem } from "./types";
 import { buildThumbUrl } from "./photo-url";
-import { nearExactExclusions } from "./near-exact";
+import { pairMetadataOk } from "./near-exact";
 import {
   colorMae,
   computeFingerprint,
@@ -55,73 +55,95 @@ async function fingerprintFor(
   return fp;
 }
 
-export interface GroupPixelScore {
-  groupId: string;
-  maxHamming: number; // worst pair, bits out of 64
-  maxColorMae: number; // worst pair, 0-255
-  maxCellDiff: number; // worst pair, 0-255
+export const MAX_GROUP_ITEMS = 20;
+
+export interface PairScore {
+  a: string; // mediaKey
+  b: string; // mediaKey
+  hamming: number; // bits out of 64
+  colorMae: number; // 0-255
+  cellDiff: number; // 0-255, worst local cell
 }
 
 export interface IdenticalScan {
-  candidateCount: number;
-  rejected?: Record<string, number>; // metadata exclusion reason -> groups
-  scores: GroupPixelScore[]; // candidates whose thumbnails all decoded
+  groupsScanned: number;
+  skipped: Record<string, number>; // reason -> groups
+  /** Raw pair scores (metadata-eligible pairs only); thresholds are applied later. */
+  pairs: Record<string, PairScore[]>; // groupId -> scores
 }
 
+export const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
 /**
- * Metadata-filters the groups, then fingerprints only the candidates and
- * records the worst pairwise distances. Thresholds are applied afterwards
- * (see `passingGroupIds`) so the UI can tune them without refetching.
+ * Scores every metadata-eligible pair (photos, taken within the window, same
+ * shape) in each group. Only items that belong to at least one such pair are
+ * fetched. Thresholds are applied afterwards by the planner so the UI can tune
+ * them without refetching.
  */
 export async function scanIdenticalGroups(
   groups: DuplicateGroup[],
   mediaItems: Record<string, GpdMediaItem>,
   opts: { onProgress?: (done: number, total: number) => void; signal?: AbortSignal } = {},
 ): Promise<IdenticalScan> {
-  const rejected: Record<string, number> = {};
-  const candidates = groups
-    .map((g) => ({
-      group: g,
-      items: g.mediaKeys.map((k) => mediaItems[k]).filter(Boolean),
-    }))
-    .filter((c) => {
-      if (c.items.length !== c.group.mediaKeys.length) {
-        rejected.missing = (rejected.missing ?? 0) + 1;
-        return false;
-      }
-      const why = nearExactExclusions(c.items, c.group.similarity);
-      for (const r of why) rejected[r] = (rejected[r] ?? 0) + 1;
-      return why.length === 0;
-    });
+  const skipped: Record<string, number> = {};
+  const skip = (r: string) => (skipped[r] = (skipped[r] ?? 0) + 1);
+  const work: { group: DuplicateGroup; pairs: [GpdMediaItem, GpdMediaItem][] }[] = [];
+  for (const g of groups) {
+    const items = g.mediaKeys.map((k) => mediaItems[k]).filter(Boolean);
+    if (items.length !== g.mediaKeys.length) {
+      skip("missing");
+      continue;
+    }
+    if (items.length > MAX_GROUP_ITEMS) {
+      skip("size");
+      continue;
+    }
+    const pairs: [GpdMediaItem, GpdMediaItem][] = [];
+    for (let i = 0; i < items.length; i++)
+      for (let j = i + 1; j < items.length; j++)
+        if (pairMetadataOk(items[i], items[j])) pairs.push([items[i], items[j]]);
+    if (pairs.length === 0) {
+      skip("no comparable pair");
+      continue;
+    }
+    work.push({ group: g, pairs });
+  }
 
-  const scores: GroupPixelScore[] = [];
-  const queue = [...candidates];
+  const result: Record<string, PairScore[]> = {};
+  const queue = [...work];
   let done = 0;
   const worker = async () => {
-    for (let c = queue.shift(); c; c = queue.shift()) {
+    for (let w = queue.shift(); w; w = queue.shift()) {
       opts.signal?.throwIfAborted();
-      const fps = await Promise.all(c.items.map((i) => fingerprintFor(i, opts.signal)));
-      if (fps.every((f): f is Fingerprint => f !== null)) {
-        let maxHamming = 0;
-        let maxColorMae = 0;
-        let maxCell = 0;
-        for (let i = 0; i < fps.length; i++)
-          for (let j = i + 1; j < fps.length; j++) {
-            maxHamming = Math.max(maxHamming, hamming(fps[i].dhash, fps[j].dhash));
-            maxColorMae = Math.max(maxColorMae, colorMae(fps[i].color, fps[j].color));
-            maxCell = Math.max(maxCell, maxCellDiff(fps[i].gray, fps[j].gray));
-          }
-        scores.push({ groupId: c.group.id, maxHamming, maxColorMae, maxCellDiff: maxCell });
+      const need = new Map<string, GpdMediaItem>();
+      for (const [a, b] of w.pairs) {
+        need.set(a.mediaKey, a);
+        need.set(b.mediaKey, b);
       }
-      opts.onProgress?.(++done, candidates.length);
+      const fps = new Map<string, Fingerprint>();
+      await Promise.all(
+        [...need.values()].map(async (it) => {
+          const f = await fingerprintFor(it, opts.signal);
+          if (f) fps.set(it.mediaKey, f);
+        }),
+      );
+      const scores: PairScore[] = [];
+      for (const [a, b] of w.pairs) {
+        const fa = fps.get(a.mediaKey);
+        const fb = fps.get(b.mediaKey);
+        if (!fa || !fb) continue; // undecoded pair can never count as identical
+        scores.push({
+          a: a.mediaKey,
+          b: b.mediaKey,
+          hamming: hamming(fa.dhash, fb.dhash),
+          colorMae: colorMae(fa.color, fb.color),
+          cellDiff: maxCellDiff(fa.gray, fb.gray),
+        });
+      }
+      result[w.group.id] = scores;
+      opts.onProgress?.(++done, work.length);
     }
   };
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-  return { candidateCount: candidates.length, rejected, scores };
-}
-
-export function passingGroupIds(scan: IdenticalScan, t: PixelThresholds): string[] {
-  return scan.scores
-    .filter((s) => s.maxHamming <= t.maxHamming && s.maxColorMae <= t.maxColorMae && s.maxCellDiff <= t.maxCellDiff)
-    .map((s) => s.groupId);
+  return { groupsScanned: work.length, skipped, pairs: result };
 }

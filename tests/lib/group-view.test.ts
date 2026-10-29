@@ -76,3 +76,18 @@ describe("trashScope", () => {
     expect(trashScope(groups, items, prefs, new Set()).map((g) => g.id)).not.toContain("B")
   })
 })
+
+describe("selection filter", () => {
+  const snap = new Set(["A", "C"])
+  const run = (selection: "all" | "selected" | "unselected") =>
+    applyViewPrefs(groups, items, { ...BASE, selection }, undefined, snap).map((g) => g.id)
+  it("shows only marked or only unmarked, judged on the snapshot", () => {
+    expect(run("selected").sort()).toEqual(["A", "C"])
+    expect(run("unselected")).toEqual(["B"])
+    expect(run("all")).toHaveLength(3)
+  })
+  it("trashScope ignores it and persistablePrefs strips it", () => {
+    expect(trashScope(groups, items, { ...BASE, selection: "selected" }).length).toBe(3)
+    expect(persistablePrefs({ ...BASE, selection: "selected" }).selection).toBe("all")
+  })
+})

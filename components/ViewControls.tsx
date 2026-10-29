@@ -45,9 +45,10 @@ interface Props {
   keepOrder: "oldest" | "newest"
   onKeepOrderChange: (o: "oldest" | "newest") => void
   onOpenTrash: () => void
+  onRefreshSelection: () => void
 }
 
-export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, scanDate, reviewedCount, onSelectShown, keepOrder, onKeepOrderChange, onOpenTrash }: Props) {
+export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, scanDate, reviewedCount, onSelectShown, keepOrder, onKeepOrderChange, onOpenTrash, onRefreshSelection }: Props) {
   const set = (p: Partial<ViewPrefs>) => onChange({ ...prefs, ...p })
   const age = scanDate ? describeScanAge(scanDate) : null
   const filtered = shown !== total
@@ -100,6 +101,15 @@ export function ViewControls({ prefs, onChange, shown, total, trashScopeCount, s
           <Switch size="small" checked={prefs.onlyPairs} onChange={(e) => set({ onlyPairs: e.target.checked })} />} />
         <FormControlLabel label="No favorites" control={
           <Switch size="small" checked={prefs.noFavorites} onChange={(e) => set({ noFavorites: e.target.checked })} />} />
+        <ToggleButtonGroup size="small" exclusive value={prefs.selection} aria-label="Selection filter"
+          onChange={(_, v) => { if (v) set({ selection: v }) }}>
+          <ToggleButton value="all">All</ToggleButton>
+          <ToggleButton value="selected">Marked</ToggleButton>
+          <ToggleButton value="unselected">Unmarked</ToggleButton>
+        </ToggleButtonGroup>
+        {prefs.selection !== "all" && (
+          <Button size="small" onClick={onRefreshSelection}>Refresh marked</Button>
+        )}
         <FormControlLabel label="Hide reviewed" control={
           <Switch size="small" checked={prefs.hideReviewed} onChange={(e) => set({ hideReviewed: e.target.checked })} />} />
         <TextField size="small" type="date" label="Taken from" InputLabelProps={{ shrink: true }}

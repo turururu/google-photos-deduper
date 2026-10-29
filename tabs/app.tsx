@@ -35,7 +35,8 @@ import { ViewControls } from "../components/ViewControls"
 import { applyViewPrefs, effectiveSelection, trashScope, persistablePrefs, DEFAULT_VIEW_PREFS, type ViewPrefs } from "../lib/group-view"
 import { buildClips, writeGroupClips } from "../lib/timelapse"
 import { buildContactSheets } from "../lib/contact-sheet"
-import { passingGroupIds, scanIdenticalGroups } from "../lib/identical-scan"
+import { scanIdenticalGroups } from "../lib/identical-scan"
+import { provenIdentical } from "../lib/identical-plan"
 import { DEFAULT_PIXEL_THRESHOLDS } from "../lib/pixel-hash"
 import { SafeSelectDialog } from "../components/SafeSelectDialog"
 import { TrashRestoreDialog, type TrashItem } from "../components/TrashRestoreDialog"
@@ -103,6 +104,7 @@ export default function App() {
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(
     new Set()
   )
+
 
   // Kept overrides: groupId -> Set of mediaKeys the user marked as "Keep"
   const [keptOverrides, setKeptOverrides] = useState<
@@ -240,6 +242,10 @@ export default function App() {
 
   const [safeSelectOpen, setSafeSelectOpen] = useState(false)
   const [viewPrefs, setViewPrefs] = useState<ViewPrefs>(DEFAULT_VIEW_PREFS)
+  // Selection the "marked only" filter judges against (see ViewPrefs.selection).
+  const [selSnapshot, setSelSnapshot] = useState<Set<string>>(new Set())
+  const selectedRef = useRef<Set<string>>(selectedGroupIds)
+  selectedRef.current = selectedGroupIds
   const [keepOrder, setKeepOrder] = useState<KeepOrder>("oldest")
   const [trashOpen, setTrashOpen] = useState(false)
   const [trashLog, setTrashLog] = useState<TrashLogEntry[]>([])
@@ -804,8 +810,8 @@ export default function App() {
   }, [viewPrefs])
 
   const shownGroups = useMemo(
-    () => (mediaItems ? applyViewPrefs(groups, mediaItems, viewPrefs, reviewedIds) : groups),
-    [groups, mediaItems, viewPrefs, reviewedIds]
+    () => (mediaItems ? applyViewPrefs(groups, mediaItems, viewPrefs, reviewedIds, selSnapshot) : groups),
+    [groups, mediaItems, viewPrefs, reviewedIds, selSnapshot]
   )
 
   // Only groups that are both selected and visible may be trashed.
@@ -959,21 +965,30 @@ export default function App() {
       return // cancelled, or unsupported
     }
     setVideoProgress([0, 0])
-    // Practically identical groups add nothing to a video (same frame repeated),
-    // so they are left out. Fingerprints are cached from "Select identical…".
-    let identical = new Set<string>()
+    // A trashed photo proven identical to a kept one adds nothing to a video
+    // (same frame repeated), so only those are left out. Fingerprints are
+    // cached from "Select identical…".
+    let provenCount = 0
+    let videoGroups = affected
     try {
       const scan = await scanIdenticalGroups(affected, state.mediaItems)
-      identical = new Set(passingGroupIds(scan, DEFAULT_PIXEL_THRESHOLDS))
+      videoGroups = []
+      for (const g of affected) {
+        const proven = provenIdentical(g, state.mediaItems, scan.pairs[g.id] ?? [], DEFAULT_PIXEL_THRESHOLDS, trashSet)
+        provenCount += proven.size
+        const needsClip = g.mediaKeys.some((k) => trashSet.has(k) && !proven.has(k))
+        if (needsClip) videoGroups.push({ ...g, mediaKeys: g.mediaKeys.filter((k) => !proven.has(k)) })
+      }
     } catch (e) {
       console.warn("[GPD] identical check before video failed; including all groups", e)
+      videoGroups = affected
     }
-    const clips = buildClips(affected.filter((g) => !identical.has(g.id)), state.mediaItems)
+    const clips = buildClips(videoGroups, state.mediaItems)
     if (clips.length === 0) {
       setVideoProgress(null)
       setBackupError(
-        identical.size > 0
-          ? `No video needed: all ${identical.size} groups are practically identical.`
+        provenCount > 0
+          ? `No video needed: all ${provenCount} photos are practically identical to a kept photo.`
           : "No groups to record."
       )
       return
@@ -981,7 +996,6 @@ export default function App() {
     const total = clips.reduce((n, c) => n + c.items.length, 0)
     setVideoProgress([0, total])
     try {
-      if (identical.size > 0) setBackupError(`${identical.size} identical groups were left out of the video.`)
       const ctrl = new AbortController()
       videoAbortRef.current = ctrl
       const r = await writeGroupClips(dir, clips, (d, t) => setVideoProgress([d, t]), ctrl.signal)
@@ -989,7 +1003,7 @@ export default function App() {
       setBackupError(
         `${r.aborted ? "Stopped. " : ""}Saved ${r.files} of ${clips.length} dated videos (${MB} MB) to the folder. In that folder run: sh set-dates.sh (sets file dates to the originals), then drag them into photos.google.com.` +
           (r.dated ? "" : " This browser can't embed dates (WebM): dates may be wrong; the filename carries the taken date.") +
-          (identical.size > 0 ? ` ${identical.size} identical groups were left out.` : "")
+          (provenCount > 0 ? ` ${provenCount} identical photos were left out.` : "")
       )
     } catch (e) {
       console.error("[GPD] video backup failed", e)
@@ -1257,8 +1271,20 @@ export default function App() {
               open={safeSelectOpen}
               groups={shownGroups}
               mediaItems={state.mediaItems}
+              keepOrder={keepOrder}
+              keptOverrides={keptOverrides}
               onClose={() => setSafeSelectOpen(false)}
-              onApply={(ids) => setSelectedGroupIds(new Set(ids))}
+              onApply={(plans) => {
+                setSelectedGroupIds(new Set(plans.map((p) => p.groupId)))
+                setKeptOverrides((prev) => {
+                  const next = { ...prev }
+                  for (const p of plans) {
+                    // never drop an already-kept photo
+                    next[p.groupId] = new Set([...(prev[p.groupId] ?? []), ...p.kept])
+                  }
+                  return next
+                })
+              }}
             />
             <TrashRestoreDialog
               open={trashOpen}
@@ -1284,7 +1310,11 @@ export default function App() {
             />
             <ViewControls
               prefs={viewPrefs}
-              onChange={setViewPrefs}
+              onChange={(next) => {
+                if (next.selection !== "all" && viewPrefs.selection === "all") setSelSnapshot(new Set(selectedRef.current))
+                setViewPrefs(next)
+              }}
+              onRefreshSelection={() => setSelSnapshot(new Set(selectedRef.current))}
               shown={shownGroups.length}
               total={groups.length}
               trashScopeCount={scopeGroups.length}

@@ -61,18 +61,19 @@ export type KeepOrder = "oldest" | "newest";
  * Keep pick: favorite > original quality > resolution > larger file >
  * upload date (oldest or newest, per `order`).
  */
+export function keepComparator(order: KeepOrder = "oldest") {
+  const dir = order === "newest" ? -1 : 1;
+  return (a: GpdMediaItem, b: GpdMediaItem) =>
+    compareKeepQuality(a, b) ||
+    (b.size ?? 0) - (a.size ?? 0) ||
+    dir * ((a.creationTimestamp ?? 0) - (b.creationTimestamp ?? 0));
+}
+
 export function selectDefaultKeep(
   items: GpdMediaItem[],
   order: KeepOrder = "oldest",
 ): string {
-  const dir = order === "newest" ? -1 : 1;
-  const best = [...items].sort(
-    (a, b) =>
-      compareKeepQuality(a, b) ||
-      (b.size ?? 0) - (a.size ?? 0) ||
-      dir * ((a.creationTimestamp ?? 0) - (b.creationTimestamp ?? 0)),
-  );
-  return best[0].mediaKey;
+  return [...items].sort(keepComparator(order))[0].mediaKey;
 }
 
 /**
